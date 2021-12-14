@@ -203,6 +203,7 @@ option(AMALGAMATION_BUILD
 
 option(BUILD_ICU_EXTENSION "Build the ICU extension." FALSE)
 option(BUILD_PARQUET_EXTENSION "Build the Parquet extension." FALSE)
+option(BUILD_AVRO_EXTENSION "Build the Avro extension." FALSE)
 option(BUILD_TPCH_EXTENSION "Build the TPC-H extension." FALSE)
 option(BUILD_TPCDS_EXTENSION "Build the TPC-DS extension." FALSE)
 option(BUILD_FTS_EXTENSION "Build the FTS extension." FALSE)
@@ -444,6 +445,11 @@ function(add_extension_definitions)
     add_definitions(-DBUILD_PARQUET_EXTENSION=${BUILD_PARQUET_EXTENSION})
   endif()
 
+  if(${BUILD_AVRO_EXTENSION})
+    include_directories(${PROJECT_SOURCE_DIR}/extension/avro/include)
+    add_definitions(-DBUILD_AVRO_EXTENSION=${BUILD_AVRO_EXTENSION})
+  endif()
+
   if(${BUILD_TPCH_EXTENSION})
     include_directories(${PROJECT_SOURCE_DIR}/extension/tpch/include)
     add_definitions(-DBUILD_TPCH_EXTENSION=${BUILD_TPCH_EXTENSION})
@@ -476,6 +482,10 @@ function(add_extension_dependencies LIBRARY)
     add_dependencies(${LIBRARY} parquet_extension)
   endif()
 
+  if(${BUILD_AVRO_EXTENSION})
+    add_dependencies(${LIBRARY} avro_extension)
+  endif()
+
   if(${BUILD_ICU_EXTENSION})
     add_dependencies(${LIBRARY} icu_extension)
   endif()
@@ -504,6 +514,10 @@ endfunction()
 function(link_extension_libraries LIBRARY)
   if(${BUILD_PARQUET_EXTENSION})
     target_link_libraries(${LIBRARY} parquet_extension)
+  endif()
+
+  if(${BUILD_AVRO_EXTENSION})
+    target_link_libraries(${LIBRARY} avro_extension)
   endif()
 
   if(${BUILD_ICU_EXTENSION})

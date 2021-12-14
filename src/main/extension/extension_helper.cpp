@@ -12,6 +12,10 @@
 #include "parquet-extension.hpp"
 #endif
 
+#ifdef BUILD_AVRO_EXTENSION
+#include "avro-extension.hpp"
+#endif
+
 #ifdef BUILD_TPCH_EXTENSION
 #include "tpch-extension.hpp"
 #endif
@@ -35,7 +39,7 @@
 namespace duckdb {
 
 void ExtensionHelper::LoadAllExtensions(DuckDB &db) {
-	unordered_set<string> extensions {"parquet", "icu", "tpch", "tpcds", "fts", "httpfs", "visualizer"};
+	unordered_set<string> extensions {"parquet", "avro", "icu", "tpch", "tpcds", "fts", "httpfs", "visualizer"};
 	for (auto &ext : extensions) {
 		LoadExtension(db, ext);
 	}
@@ -50,6 +54,13 @@ ExtensionLoadResult ExtensionHelper::LoadExtension(DuckDB &db, const std::string
 		db.LoadExtension<ParquetExtension>();
 #else
 		// parquet extension required but not build: skip this test
+		return ExtensionLoadResult::NOT_LOADED;
+#endif
+	} else if (extension == "avro") {
+#ifdef BUILD_AVRO_EXTENSION
+		db.LoadExtension<AvroExtension>();
+#else
+		// avro extension required but not build: skip this test
 		return ExtensionLoadResult::NOT_LOADED;
 #endif
 	} else if (extension == "icu") {
