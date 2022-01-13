@@ -4,8 +4,7 @@
 
 namespace duckdb {
 
-typedef uint32_t list_index_type;
-constexpr idx_t list_index_size = sizeof(list_index_type);
+constexpr idx_t list_index_size = sizeof(variant_index_type);
 
 static Value BufferToBlob(LogicalTypeId type_id, const void *data, idx_t size) {
 	Value result(LogicalType::BLOB);
@@ -17,10 +16,10 @@ static Value BufferToBlob(LogicalTypeId type_id, const void *data, idx_t size) {
 }
 
 #define FIXED_VARIANT(TYPE, TYPE_ID) \
-template <> \
-Value DUCKDB_API Variant(TYPE value) { \
-	return BufferToBlob(TYPE_ID, &value, sizeof(value)); \
-} \
+	template <> \
+	Value DUCKDB_API Variant(TYPE value) { \
+		return BufferToBlob(TYPE_ID, &value, sizeof(value)); \
+	} \
 
 FIXED_VARIANT(bool, LogicalTypeId::BOOLEAN)
 FIXED_VARIANT(int8_t, LogicalTypeId::TINYINT)
@@ -58,14 +57,15 @@ static void TypeToBlob(const LogicalType &type, string &result) {
 	case LogicalTypeId::LIST:
 		TypeToBlob(ListType::GetChildType(type), result);
 		break;
-	case LogicalTypeId::STRUCT: {
+	case LogicalTypeId::STRUCT:
+	case LogicalTypeId::MAP: {
 		auto &list = StructType::GetChildTypes(type);
 		idx_t offsets = result.size();
-		result.resize(offsets + MaxValue(list.size(), (idx_t)1) * list_index_size);
+		result.resize(offsets + MaxValue<idx_t>(list.size(), 1) * list_index_size);
 		for (idx_t i = 0; i < list.size(); ++i) {
-			((list_index_type *)&result[offsets])[i] = list_index_type(result.size() - offsets);
+			((variant_index_type *)&result[offsets])[i] = variant_index_type(result.size() - offsets);
 			auto &v = list[i];
-			list_index_type size = (list_index_type)v.first.size();
+			variant_index_type size = (variant_index_type)v.first.size();
 			result.append((const char *)&size, list_index_size);
 			result += v.first;
 			TypeToBlob(v.second, result);
@@ -113,7 +113,7 @@ static void ValueToBlob(const Value &value, string &result) {
 
 	case PhysicalType::LIST: {
 		const auto &list = value.list_value;
-		list_index_type list_size = (list_index_type)list.size();
+		variant_index_type list_size = (variant_index_type)list.size();
 		if (list_size == 0) {
 			return;
 		}
@@ -138,7 +138,7 @@ static void ValueToBlob(const Value &value, string &result) {
 		idx_t offsets = result.size();
 		idx_t offsets_size = (list.size() + 1) * list_index_size;
 		result.resize(offsets + offsets_size);
-		*(list_index_type *)&result[offsets] = (list_index_type)offsets_size;
+		*(variant_index_type *)&result[offsets] = (variant_index_type)offsets_size;
 		bool is_any = child_type.id() == LogicalTypeId::ANY;
 		for (idx_t i = 0; i < list.size(); ++i) {
 			auto &v = list[i];
@@ -152,7 +152,7 @@ static void ValueToBlob(const Value &value, string &result) {
 				}
 				ValueToBlob(v, result);
 			}
-			((list_index_type *)&result[offsets])[i+1] = list_index_type(result.size() - offsets);
+			((variant_index_type *)&result[offsets])[i + 1] = variant_index_type(result.size() - offsets);
 		}
 		return;
 	}
@@ -167,7 +167,7 @@ static void ValueToBlob(const Value &value, string &result) {
 		idx_t offsets = result.size();
 		idx_t offsets_size = (list.size() + 1) * list_index_size;
 		result.resize(offsets + offsets_size);
-		*(list_index_type *)&result[offsets] = (list_index_type)offsets_size;
+		*(variant_index_type *)&result[offsets] = (variant_index_type)offsets_size;
 		auto &child_types = StructType::GetChildTypes(type);
 		for (idx_t i = 0; i < list.size(); ++i) {
 			auto &v = list[i];
@@ -181,7 +181,7 @@ static void ValueToBlob(const Value &value, string &result) {
 				}
 				ValueToBlob(v, result);
 			}
-			((list_index_type *)&result[offsets])[i+1] = list_index_type(result.size() - offsets);
+			((variant_index_type *)&result[offsets])[i + 1] = variant_index_type(result.size() - offsets);
 		}
 		return;
 	}
@@ -210,8 +210,7 @@ Value DUCKDB_API Variant(const Value &value) {
 	return result;
 }
 
-[[noreturn]]
-static void BadVariant() {
+[[noreturn]] static void BadVariant() {
 	throw InvalidInputException("Invalid Variant value");
 }
 
@@ -232,11 +231,12 @@ static LogicalType BlobToType(const char *&begin, const char *end) {
 	}
 	case LogicalTypeId::LIST:
 		return LogicalType::LIST(BlobToType(begin, end));
-	case LogicalTypeId::STRUCT: {
+	case LogicalTypeId::STRUCT:
+	case LogicalTypeId::MAP: {
 		if (begin + list_index_size > end) {
 			BadVariant();
 		}
-		const list_index_type *offsets = (const list_index_type *)begin;
+		const variant_index_type *offsets = (const variant_index_type *)begin;
 		const char *start = begin;
 		idx_t list_size = *offsets / list_index_size;
 		child_list_t<LogicalType> child_types;
@@ -249,7 +249,7 @@ static LogicalType BlobToType(const char *&begin, const char *end) {
 				if (begin + list_index_size > end) {
 					BadVariant();
 				}
-				list_index_type key_size = *(const list_index_type *)begin;
+				variant_index_type key_size = *(const variant_index_type *)begin;
 				begin += list_index_size;
 				if (begin + key_size > end) {
 					BadVariant();
@@ -259,7 +259,8 @@ static LogicalType BlobToType(const char *&begin, const char *end) {
 				child_types.push_back({move(key), BlobToType(begin, end)});
 			}
 		}
-		return LogicalType::STRUCT(move(child_types));
+		return type_id == LogicalTypeId::STRUCT ? LogicalType::STRUCT(move(child_types))
+		                                        : LogicalType::MAP(move(child_types));
 	}
 	}
 	return type_id;
@@ -271,7 +272,7 @@ static void BlobToValue(const char *begin, const char *end, Value &result) {
 	D_ASSERT(begin <= end);
 	idx_t blob_size = end - begin;
 
-	switch(type.InternalType()) {
+	switch (type.InternalType()) {
 
 	case PhysicalType::VARCHAR:
 		result.str_value = string(begin, blob_size);
@@ -284,7 +285,7 @@ static void BlobToValue(const char *begin, const char *end, Value &result) {
 		if (blob_size < list_index_size) {
 			BadVariant();
 		}
-		idx_t list_size = *(const list_index_type *)begin;
+		idx_t list_size = *(const variant_index_type *)begin;
 		auto &list = result.list_value;
 		list.reserve(list_size);
 		auto &child_type = ListType::GetChildType(type);
@@ -306,7 +307,7 @@ static void BlobToValue(const char *begin, const char *end, Value &result) {
 			}
 			return;
 		}
-		const list_index_type *offsets = (const list_index_type *)begin;
+		const variant_index_type *offsets = (const variant_index_type *)begin;
 		const char *start = begin;
 		if (start + (list_size + 1) * list_index_size > end) {
 			BadVariant();
@@ -342,7 +343,7 @@ static void BlobToValue(const char *begin, const char *end, Value &result) {
 		list.reserve(list_size);
 		const char *bitmap = begin;
 		begin += (list_size + 7) / 8;
-		const list_index_type *offsets = (const list_index_type *)begin;
+		const variant_index_type *offsets = (const variant_index_type *)begin;
 		const char *start = begin;
 		if (start + (list_size + 1) * list_index_size > end) {
 			BadVariant();

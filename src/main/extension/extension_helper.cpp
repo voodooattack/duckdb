@@ -9,6 +9,10 @@
 #include "icu-extension.hpp"
 #endif
 
+#ifdef BUILD_VARIANT_EXTENSION
+#include "variant-extension.hpp"
+#endif
+
 #ifdef BUILD_PARQUET_EXTENSION
 #include "parquet-extension.hpp"
 #endif
@@ -36,7 +40,7 @@
 namespace duckdb {
 
 void ExtensionHelper::LoadAllExtensions(DuckDB &db) {
-	unordered_set<string> extensions {"parquet", "icu", "tpch", "tpcds", "fts", "httpfs", "visualizer"};
+	unordered_set<string> extensions {"variant", "parquet", "icu", "tpch", "tpcds", "fts", "httpfs", "visualizer"};
 	for (auto &ext : extensions) {
 		LoadExtensionInternal(db, ext, true);
 	}
@@ -72,6 +76,13 @@ ExtensionLoadResult ExtensionHelper::LoadExtensionInternal(DuckDB &db, const std
 		db.LoadExtension<ParquetExtension>();
 #else
 		// parquet extension required but not build: skip this test
+		return ExtensionLoadResult::NOT_LOADED;
+#endif
+	} else if (extension == "variant") {
+#ifdef BUILD_VARIANT_EXTENSION
+		db.LoadExtension<VariantExtension>();
+#else
+		// variant extension required but not build: skip this test
 		return ExtensionLoadResult::NOT_LOADED;
 #endif
 	} else if (extension == "icu") {

@@ -202,6 +202,7 @@ option(AMALGAMATION_BUILD
        FALSE)
 
 option(BUILD_ICU_EXTENSION "Build the ICU extension." FALSE)
+option(BUILD_VARIANT_EXTENSION "Build the Variant extension." FALSE)
 option(BUILD_PARQUET_EXTENSION "Build the Parquet extension." FALSE)
 option(BUILD_TPCH_EXTENSION "Build the TPC-H extension." FALSE)
 option(BUILD_TPCDS_EXTENSION "Build the TPC-DS extension." FALSE)
@@ -444,6 +445,11 @@ function(add_extension_definitions)
     add_definitions(-DBUILD_ICU_EXTENSION=${BUILD_ICU_EXTENSION})
   endif()
 
+  if(${BUILD_VARIANT_EXTENSION})
+    include_directories(${PROJECT_SOURCE_DIR}/extension/variant/include)
+    add_definitions(-DBUILD_VARIANT_EXTENSION=${BUILD_VARIANT_EXTENSION})
+  endif()
+
   if(${BUILD_PARQUET_EXTENSION})
     include_directories(${PROJECT_SOURCE_DIR}/extension/parquet/include)
     add_definitions(-DBUILD_PARQUET_EXTENSION=${BUILD_PARQUET_EXTENSION})
@@ -477,6 +483,10 @@ function(add_extension_definitions)
 endfunction()
 
 function(add_extension_dependencies LIBRARY)
+  if(${BUILD_VARIANT_EXTENSION})
+    add_dependencies(${LIBRARY} variant_extension)
+  endif()
+
   if(${BUILD_PARQUET_EXTENSION})
     add_dependencies(${LIBRARY} parquet_extension)
   endif()
@@ -507,6 +517,10 @@ function(add_extension_dependencies LIBRARY)
 endfunction()
 
 function(link_extension_libraries LIBRARY)
+  if(${BUILD_VARIANT_EXTENSION})
+    target_link_libraries(${LIBRARY} variant_extension)
+  endif()
+
   if(${BUILD_PARQUET_EXTENSION})
     target_link_libraries(${LIBRARY} parquet_extension)
   endif()

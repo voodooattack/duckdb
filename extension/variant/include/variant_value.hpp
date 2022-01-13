@@ -4,6 +4,8 @@
 
 namespace duckdb {
 
+typedef uint32_t variant_index_type;
+
 template <typename T>
 Value Variant(T value) {
 	static_assert(false, "Cannot convert type to Variant");
