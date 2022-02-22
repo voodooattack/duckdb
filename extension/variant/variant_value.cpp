@@ -15,11 +15,11 @@ static Value BufferToBlob(LogicalTypeId type_id, const void *data, idx_t size) {
 	return result;
 }
 
-#define FIXED_VARIANT(TYPE, TYPE_ID) \
-	template <> \
-	Value DUCKDB_API Variant(TYPE value) { \
+#define FIXED_VARIANT(TYPE, TYPE_ID)                         \
+	template <>                                              \
+	Value DUCKDB_API Variant(TYPE value) {                   \
 		return BufferToBlob(TYPE_ID, &value, sizeof(value)); \
-	} \
+	}                                                        \
 
 FIXED_VARIANT(bool, LogicalTypeId::BOOLEAN)
 FIXED_VARIANT(int8_t, LogicalTypeId::TINYINT)
@@ -128,10 +128,11 @@ static void ValueToBlob(const Value &value, string &result) {
 				auto &v = list[i];
 				if (v.is_null) {
 					result[bitmap + i / 8] |= 1 << (i % 8);
+					result.append(child_size, '\0');
 				} else {
 					D_ASSERT(v.type() == child_type);
+					result.append((const char *)&v.value_, child_size);
 				}
-				result.append((const char *)&v.value_, child_size);
 			}
 			return;
 		}
@@ -297,7 +298,7 @@ static void BlobToValue(const char *begin, const char *end, Value &result) {
 				BadVariant();
 			}
 			for (idx_t i = 0; i < list_size; ++i) {
-				list.push_back(Value(child_type));
+				list.emplace_back(child_type);
 				if (!(bitmap[i / 8] & (1 << i % 8))) {
 					auto &v = list.back();
 					v.is_null = false;
@@ -323,9 +324,9 @@ static void BlobToValue(const char *begin, const char *end, Value &result) {
 					BadVariant();
 				}
 				if (is_any) {
-					list.push_back(Value(BlobToType(begin, v_end)));
+					list.emplace_back(BlobToType(begin, v_end));
 				} else {
-					list.push_back(Value(child_type));
+					list.emplace_back(child_type);
 				}
 				BlobToValue(begin, v_end, list.back());
 			}
@@ -359,9 +360,9 @@ static void BlobToValue(const char *begin, const char *end, Value &result) {
 					BadVariant();
 				}
 				if (child_type.id() == LogicalTypeId::ANY) {
-					list.push_back(Value(BlobToType(begin, v_end)));
+					list.emplace_back(BlobToType(begin, v_end));
 				} else {
-					list.push_back(Value(child_type));
+					list.emplace_back(child_type);
 				}
 				BlobToValue(begin, v_end, list.back());
 			}

@@ -41,7 +41,7 @@ static void FromVariantFunction(DataChunk &args, ExpressionState &state, Vector 
 					goto set_null;
 				}
 				auto &child_types = StructType::GetChildTypes(vp->type());
-				for (idx_t i = 0; ; ++i) {
+				for (idx_t i = 0;; ++i) {
 					if (i >= child_types.size()) {
 						goto set_null;
 					}
@@ -82,7 +82,7 @@ static void FromVariantFunction(DataChunk &args, ExpressionState &state, Vector 
 		}
 		result.SetValue(i_row, *vp);
 		continue;
-set_null:
+	set_null:
 		FlatVector::SetNull(result, i_row, true);
 	}
 }

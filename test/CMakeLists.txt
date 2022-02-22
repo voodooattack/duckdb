@@ -24,6 +24,10 @@ if(NOT WIN32 AND NOT SUN)
   add_subdirectory(persistence)
 endif()
 
+if(${BUILD_VARIANT_EXTENSION})
+  add_subdirectory(variant)
+endif()
+
 add_definitions(-DDUCKDB_ROOT_DIRECTORY="${PROJECT_SOURCE_DIR}")
 
 add_executable(unittest unittest.cpp ${ALL_OBJECT_FILES})
