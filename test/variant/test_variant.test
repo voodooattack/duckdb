@@ -9,33 +9,78 @@ CREATE TYPE enum_type AS ENUM ('one', 'two', 'three');
 
 # CONSTANT_VECTOR
 query I
-SELECT VARIANT(10) FROM RANGE(1, 3);
+SELECT VARIANT(-300::SMALLINT) FROM RANGE(1, 3);
 ----
-\x0D\x0A\x00\x00\x00
-\x0D\x0A\x00\x00\x00
+\x0C\xD4\xFE
+\x0C\xD4\xFE
+
+query I
+SELECT FROM_VARIANT('SMALLINT', '\x0C\xD4\xFE'::BLOB) FROM RANGE(1, 3);
+----
+-300
+-300
 
 # FLAT_VECTOR
 query I
-SELECT VARIANT(range+10) FROM RANGE(1, 3);
+SELECT VARIANT(range-300) FROM RANGE(1, 3);
 ----
-\x0E\x0B\x00\x00\x00\x00\x00\x00\x00
-\x0E\x0C\x00\x00\x00\x00\x00\x00\x00
+\x0E\xD5\xFE\xFF\xFF\xFF\xFF\xFF\xFF
+\x0E\xD6\xFE\xFF\xFF\xFF\xFF\xFF\xFF
+
+query I
+SELECT FROM_VARIANT('SMALLINT', ('\x0C\xD4\xF' || range)::BLOB) FROM RANGE(1, 3);
+----
+-3628
+-3372
 
 # SEQUENCE_VECTOR
 query I
-SELECT VARIANT(range) FROM RANGE(1, 10, 3);
+SELECT VARIANT(range) FROM RANGE(-310, -301, 3);
 ----
-\x0E\x01\x00\x00\x00\x00\x00\x00\x00
-\x0E\x04\x00\x00\x00\x00\x00\x00\x00
-\x0E\x07\x00\x00\x00\x00\x00\x00\x00
+\x0E\xCA\xFE\xFF\xFF\xFF\xFF\xFF\xFF
+\x0E\xCD\xFE\xFF\xFF\xFF\xFF\xFF\xFF
+\x0E\xD0\xFE\xFF\xFF\xFF\xFF\xFF\xFF
 
 # DICTIONARY_VECTOR
 query I
-SELECT VARIANT(range) FROM RANGE(1, 10) WHERE range % 3 = 0;
+SELECT VARIANT(range) FROM RANGE(-310, -301) WHERE range % 3 = 0;
 ----
-\x0E\x03\x00\x00\x00\x00\x00\x00\x00
-\x0E\x06\x00\x00\x00\x00\x00\x00\x00
-\x0E\x09\x00\x00\x00\x00\x00\x00\x00
+\x0E\xCB\xFE\xFF\xFF\xFF\xFF\xFF\xFF
+\x0E\xCE\xFE\xFF\xFF\xFF\xFF\xFF\xFF
+\x0E\xD1\xFE\xFF\xFF\xFF\xFF\xFF\xFF
+
+statement ok
+CREATE TABLE t (i INT, b BLOB);
+
+statement ok
+INSERT INTO t SELECT range, ('\x0C\xD4\xF' || range)::BLOB FROM RANGE(10);
+
+query I
+SELECT FROM_VARIANT('SMALLINT', b) FROM t WHERE i % 3 = 0;
+----
+-3884
+-3116
+-2348
+-1580
+
+# nested
+query I
+SELECT FROM_VARIANT('INT', VARIANT([11, 22, 33]), 1);
+----
+22
+
+query I
+SELECT FROM_VARIANT('DATE', VARIANT([['2021-12-31', '2021-11-30', '2021-10-31'], ['2021-09-29', '2021-08-31']]::DATE[][]), 1, 0);
+----
+2021-09-29
+
+statement ok
+INSERT INTO t VALUES (-1, VARIANT([{'bool': TRUE, 'string': 'hello', 'a list': [0, NULL, 127]::TINYINT[], 'null': NULL, 'another list': []::VARCHAR[], 'nested': {'child1': 123, 'child2': 'a string'}}, NULL, {'bool': FALSE, 'string': 'goodbye', 'a list': []::TINYINT[], 'null': NULL, 'another list': ['one', 'two'], 'nested': {'child1': 456, 'child2': 'also a string'}}]));
+
+query III
+SELECT FROM_VARIANT('BOOL', b, 0, 'bool'), FROM_VARIANT('VARCHAR', b, 2, 'nested', 'child2'), FROM_VARIANT('TINYINT', b, 0, 'a list', 2) FROM t WHERE i = -1;
+----
+true	also a string	127
 
 # generated data
 
@@ -353,6 +398,11 @@ query I
 SELECT VARIANT('two'::ENUM_TYPE);
 ----
 \x19two
+
+query I
+SELECT FROM_VARIANT('VARCHAR', '\x19two'::BLOB);
+----
+two
 
 query I
 SELECT VARIANT([]);

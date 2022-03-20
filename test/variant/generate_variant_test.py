@@ -110,7 +110,7 @@ def main():
 
 			res = con.query(f'SELECT TYPEOF({d});').fetchall()
 			tp = res[0][0]
-			if tp.startswith(('DECIMAL', 'LIST', 'STRUCT', 'MAP', 'enum_type')):
+			if tp.startswith('DECIMAL', 'LIST', 'STRUCT', 'MAP'):
 				continue
 			tp = {
 				'NULL': 'VARCHAR',
@@ -119,6 +119,7 @@ def main():
 				'TIMESTAMP (SEC)': 'TIMESTAMP_S',
 				'TIMESTAMP (MS)': 'TIMESTAMP_MS',
 				'TIMESTAMP (NS)': 'TIMESTAMP_NS',
+				'enum_type': 'VARCHAR',
 			}.get(tp, tp)
 			old = con.query(f'SELECT {d};').fetchall()[0][0]
 			q = f"SELECT FROM_VARIANT('{tp}', {blob})"
