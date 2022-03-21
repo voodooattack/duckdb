@@ -35,6 +35,7 @@ TRUE
 3.14159265::DECIMAL(9,8)
 3.14159265358979323::DECIMAL(18,17)
 '-1.7014118346046923173168730371588'::DECIMAL(32,31)
+'[{"key": "value}, null, 123, true]'::JSON
 'two'::ENUM_TYPE
 []
 [NULL]
@@ -71,8 +72,10 @@ TRUE
 ['one', NULL, 'two', 'three']::ENUM_TYPE[]
 [[1, 2, 3, NULL], [4, 5, 6], NULL, [], [1]]::SMALLINT[][]
 [['a', 'bbb', 'cdefg', NULL], ['h', 'ij', 'klm'], NULL, [], ['', '']]
-[{'bool': TRUE, 'string': 'hello', 'a list': [0, NULL, 127]::TINYINT[], 'null': NULL, 'another list': []::VARCHAR[], 'nested': {'child1': 123, 'child2': 'a string'}}, NULL, {'bool': FALSE, 'string': 'goodbye', 'a list': []::TINYINT[], 'null': NULL, 'another list': ['one', 'two'], 'nested': {'child1': 456, 'child2': 'also a string'}}]
-{'bool': TRUE, 'string': 'hello', 'a list': [0, NULL, 127]::TINYINT[], 'null': NULL, 'another list': []::VARCHAR[], 'nested': {'child1': 123, 'child2': 'a string'}}
+[{'bool': TRUE, 'string': 'hello', 'a list': [0, NULL, 127]::TINYINT[], 'nil': NULL, 'another list': []::VARCHAR[], 'nested': {'child1': 123, 'child2': 'a string'}}, NULL, {'bool': FALSE, 'string': 'goodbye', 'a list': []::TINYINT[], 'nil': NULL, 'another list': ['one', 'two'], 'nested': {'child1': 456, 'child2': 'also a string'}}]
+{'bool': TRUE, 'string': 'hello', 'a list': [0, NULL, 127]::TINYINT[], 'nil': NULL, 'another list': []::VARCHAR[], 'nested': {'child1': 123, 'child2': 'a string'}}
+[{'bool': TRUE, 'string': 'hello', 'a list': [0, NULL, 127]::TINYINT[], 'another list': []::VARCHAR[], 'nested': {'child1': 123, 'child2': 'a string'}}, NULL, {'bool': FALSE, 'string': 'goodbye', 'a list': []::TINYINT[], 'another list': ['one', 'two'], 'nested': {'child1': 456, 'child2': 'also a string'}}]
+{'bool': TRUE, 'string': 'hello', 'a list': [0, NULL, 127]::TINYINT[], 'another list': []::VARCHAR[], 'nested': {'child1': 123, 'child2': 'a string'}}
 map(['key1', 'key2'], [1, 2])
 '''
 
@@ -110,16 +113,12 @@ def main():
 
 			res = con.query(f'SELECT TYPEOF({d});').fetchall()
 			tp = res[0][0]
-			if tp.startswith('DECIMAL', 'LIST', 'STRUCT', 'MAP'):
+			if tp == 'NULL[]' or tp.startswith('STRUCT') and 'nil' in tp:
 				continue
+			tp = tp.replace('enum_type', 'VARCHAR').replace('a list', '"a list"').replace('another list', '"another list"')
 			tp = {
-				'NULL': 'VARCHAR',
 				'TIME WITH TIME ZONE': 'TIMETZ',
 				'TIMESTAMP WITH TIME ZONE': 'TIMESTAMPTZ',
-				'TIMESTAMP (SEC)': 'TIMESTAMP_S',
-				'TIMESTAMP (MS)': 'TIMESTAMP_MS',
-				'TIMESTAMP (NS)': 'TIMESTAMP_NS',
-				'enum_type': 'VARCHAR',
 			}.get(tp, tp)
 			old = con.query(f'SELECT {d};').fetchall()[0][0]
 			q = f"SELECT FROM_VARIANT('{tp}', {blob})"

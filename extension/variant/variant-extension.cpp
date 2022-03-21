@@ -103,7 +103,13 @@ unique_ptr<FunctionData> FromVariantBind(ClientContext &context, ScalarFunction 
 			throw InvalidInputException("indices must be of string or integer type");
 		}
 	}
-	bound_function.return_type = TransformStringToLogicalType(type_str.str_value);
+	LogicalTypeId return_type_id = TransformStringToLogicalTypeId(type_str.str_value);
+	if (return_type_id == LogicalTypeId::USER) {
+		bound_function.return_type = TransformStringToLogicalType(type_str.str_value);
+	}
+	else {
+		bound_function.return_type = return_type_id;
+	}
 	return nullptr;
 }
 

@@ -16,7 +16,7 @@ using namespace duckdb;
 
 #ifdef GEN_VARIANT
 #include <fstream>
-#define GEN(v) of << "blob = Value::BLOB(R\"'(" << v << ")'\");\nREQUIRE(" #v " == blob);\n"
+#define GEN(v)  of << "blob = Value::BLOB(R\"'(" << v << ")'\");\nREQUIRE(" #v " == blob);\n"
 #define GENV(v) of << "blob = Value::BLOB(R\"'(" << Variant(v) << ")'\");\nREQUIRE(Variant(" #v ") == blob);\n"
 #endif
 
@@ -26,7 +26,8 @@ TEST_CASE("Test variant", "[variant]") {
 	Connection con(db);
 
 	REQUIRE_NO_FAIL(con.Query("CREATE TYPE enum_type AS ENUM ('one', 'two', 'three');"));
-	auto enum_type_catalog = (TypeCatalogEntry *)db.instance->GetCatalog().GetEntry(*con.context, CatalogType::TYPE_ENTRY, "", "enum_type", true);
+	auto enum_type_catalog = (TypeCatalogEntry *)db.instance->GetCatalog().GetEntry(
+	    *con.context, CatalogType::TYPE_ENTRY, "", "enum_type", true);
 	const LogicalType &tp_enum = enum_type_catalog->user_type;
 
 	hugeint_t huge_val;
