@@ -27,7 +27,7 @@ TEST_CASE("Test variant", "[variant]") {
 
 	REQUIRE_NO_FAIL(con.Query("CREATE TYPE enum_type AS ENUM ('one', 'two', 'three');"));
 	auto enum_type_catalog = (TypeCatalogEntry *)db.instance->GetCatalog().GetEntry(*con.context, CatalogType::TYPE_ENTRY, "", "enum_type", true);
-	const LogicalType &tp_enum = *enum_type_catalog->user_type;
+	const LogicalType &tp_enum = enum_type_catalog->user_type;
 
 	hugeint_t huge_val;
 	huge_val.upper = 0x8000000000000000;
@@ -141,7 +141,7 @@ TEST_CASE("Test variant", "[variant]") {
 	GENV(Value::LIST(LogicalType::UINTEGER, {0x80000001LL}));
 	GENV(Value::LIST(LogicalType::BIGINT, {std::numeric_limits<int64_t>::max(), nullptr, std::numeric_limits<int64_t>::min()}));
 	GENV(Value::LIST(LogicalType::UBIGINT, {Value::UBIGINT(100), Value::UBIGINT(200)}));
-	GENV(Value::LIST(LogicalType::HUGEINT, {Value::HUGEINT(huge_val), Value::HUGEINT(huge_val) / 2, nullptr}));
+	GENV(Value::LIST(LogicalType::HUGEINT, {Value::HUGEINT(huge_val), Value::HUGEINT(huge_val / 2), nullptr}));
 	GENV(Value::LIST(LogicalType::FLOAT, {3.14f, 2.71f, 0.0f, nullptr, std::numeric_limits<float>::max()}));
 	GENV(Value::LIST(LogicalType::DOUBLE, {3.14, 2.71, 0.0, nullptr, std::numeric_limits<double>::max()}));
 	GENV(Value::LIST(LogicalType::DATE, {Value::DATE(2021, 12, 31), nullptr, Value::DATE(2022, 1, 1)}));

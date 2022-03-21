@@ -1,3 +1,4 @@
+#define DUCKDB_API_VERSION 1
 #include "duckdb.hpp"
 
 #include "variant_value.hpp"

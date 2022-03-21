@@ -1,3 +1,4 @@
+#define DUCKDB_API_VERSION 1
 #define DUCKDB_EXTENSION_MAIN
 
 #include "duckdb.hpp"
