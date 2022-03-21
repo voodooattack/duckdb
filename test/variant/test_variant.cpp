@@ -1,5 +1,5 @@
 //#define GEN_VARIANT
-
+#define DUCKDB_API_VERSION 1
 #include <catch.hpp>
 #include <test_helpers.hpp>
 
