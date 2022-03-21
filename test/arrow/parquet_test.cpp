@@ -32,10 +32,16 @@ std::shared_ptr<arrow::Table> ReadParquetFile(const duckdb::string &path) {
 	std::unique_ptr<parquet::arrow::FileReader> reader;
 
 	auto status = parquet::arrow::OpenFile(infile, arrow::default_memory_pool(), &reader);
-	REQUIRE(status.ok());
+	if (!status.ok()) {
+		fprintf(stderr, "Failed to open file \"%s\"\n", path.c_str());
+		REQUIRE(false);
+	}
 	std::shared_ptr<arrow::Table> table;
 	status = reader->ReadTable(&table);
-	REQUIRE(status.ok());
+	if (!status.ok()) {
+		fprintf(stderr, "Arrow failed to read file \"%s\"\n", path.c_str());
+		REQUIRE(false);
+	}
 	return table;
 }
 
@@ -77,7 +83,7 @@ bool RoundTrip(std::string &path, std::vector<std::string> &skip, duckdb::Connec
 	auto result = ArrowToDuck(conn, *table);
 	ArrowSchema abi_arrow_schema;
 	std::vector<std::shared_ptr<arrow::RecordBatch>> batches_result;
-	result->ToArrowSchema(&abi_arrow_schema);
+	duckdb::QueryResult::ToArrowSchema(&abi_arrow_schema, result->types, result->names);
 	auto result_schema = arrow::ImportSchema(&abi_arrow_schema);
 
 	while (true) {
@@ -166,6 +172,12 @@ TEST_CASE("Test Parquet Files", "[arrow]") {
 	skip.emplace_back("bug687_nulls.parquet");         //! This is just crazy slow
 	skip.emplace_back("nullbyte.parquet");             //! Null byte in file
 	skip.emplace_back("nullbyte_multiple.parquet");    //! Null byte in file
+	// arrow does not like (some of) these files
+	skip.emplace_back("7-set.snappy.arrow2.parquet");
+	skip.emplace_back("complex.parquet");
+	skip.emplace_back("p2.parquet");
+	skip.emplace_back("p2strings.parquet");
+	skip.emplace_back("simple.parquet");
 
 	duckdb::DuckDB db;
 	duckdb::Connection conn {db};
@@ -182,6 +194,7 @@ TEST_CASE("Test Arrow Parquet Files", "[arrow]") {
 	std::vector<std::string> skip {"datapage_v2.snappy.parquet"}; //! Not supported by arrow
 	skip.emplace_back("lz4_raw_compressed.parquet");              //! Arrow can't read this
 	skip.emplace_back("lz4_raw_compressed_larger.parquet");       //! Arrow can't read this
+	skip.emplace_back("uuid-arrow.parquet");                      //! Not supported by arrow
 
 	duckdb::DuckDB db;
 	duckdb::Connection conn {db};

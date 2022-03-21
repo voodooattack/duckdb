@@ -22,10 +22,7 @@ struct PragmaLastProfilingOutputData : public TableFunctionData {
 	vector<LogicalType> types;
 };
 
-static unique_ptr<FunctionData> PragmaLastProfilingOutputBind(ClientContext &context, vector<Value> &inputs,
-                                                              unordered_map<string, Value> &named_parameters,
-                                                              vector<LogicalType> &input_table_types,
-                                                              vector<string> &input_table_names,
+static unique_ptr<FunctionData> PragmaLastProfilingOutputBind(ClientContext &context, TableFunctionBindInput &input,
                                                               vector<LogicalType> &return_types,
                                                               vector<string> &names) {
 	names.emplace_back("OPERATOR_ID");

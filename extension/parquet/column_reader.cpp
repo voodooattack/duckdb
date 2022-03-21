@@ -4,6 +4,7 @@
 #include "parquet_reader.hpp"
 
 #include "boolean_column_reader.hpp"
+#include "cast_column_reader.hpp"
 #include "callback_column_reader.hpp"
 #include "parquet_decimal_utils.hpp"
 #include "list_column_reader.hpp"
@@ -30,12 +31,12 @@ using duckdb_parquet::format::Encoding;
 using duckdb_parquet::format::PageType;
 using duckdb_parquet::format::Type;
 
-const uint32_t RleBpDecoder::BITPACK_MASKS[] = {
+const uint32_t ParquetDecodeUtils::BITPACK_MASKS[] = {
     0,       1,       3,        7,        15,       31,        63,        127,       255,        511,       1023,
     2047,    4095,    8191,     16383,    32767,    65535,     131071,    262143,    524287,     1048575,   2097151,
     4194303, 8388607, 16777215, 33554431, 67108863, 134217727, 268435455, 536870911, 1073741823, 2147483647};
 
-const uint8_t RleBpDecoder::BITPACK_DLEN = 8;
+const uint8_t ParquetDecodeUtils::BITPACK_DLEN = 8;
 
 ColumnReader::ColumnReader(ParquetReader &reader, LogicalType type_p, const SchemaElement &schema_p, idx_t file_idx_p,
                            idx_t max_define_p, idx_t max_repeat_p)
@@ -51,12 +52,28 @@ ColumnReader::ColumnReader(ParquetReader &reader, LogicalType type_p, const Sche
 ColumnReader::~ColumnReader() {
 }
 
-const LogicalType &ColumnReader::Type() {
+ParquetReader &ColumnReader::Reader() {
+	return reader;
+}
+
+const LogicalType &ColumnReader::Type() const {
 	return type;
 }
 
-const SchemaElement &ColumnReader::Schema() {
+const SchemaElement &ColumnReader::Schema() const {
 	return schema;
+}
+
+idx_t ColumnReader::FileIdx() const {
+	return file_idx;
+}
+
+idx_t ColumnReader::MaxDefine() const {
+	return max_define;
+}
+
+idx_t ColumnReader::MaxRepeat() const {
+	return max_repeat;
 }
 
 idx_t ColumnReader::GroupRowsAvailable() {
@@ -118,21 +135,63 @@ void ColumnReader::PrepareRead(parquet_filter_t &filter) {
 	PageHeader page_hdr;
 	page_hdr.read(protocol);
 
-	//	page_hdr.printTo(std::cout);
-	//	std::cout << '\n';
-
-	PreparePage(page_hdr.compressed_page_size, page_hdr.uncompressed_page_size);
-
 	switch (page_hdr.type) {
 	case PageType::DATA_PAGE_V2:
+		PreparePageV2(page_hdr);
+		PrepareDataPage(page_hdr);
+		break;
 	case PageType::DATA_PAGE:
+		PreparePage(page_hdr.compressed_page_size, page_hdr.uncompressed_page_size);
 		PrepareDataPage(page_hdr);
 		break;
 	case PageType::DICTIONARY_PAGE:
+		PreparePage(page_hdr.compressed_page_size, page_hdr.uncompressed_page_size);
 		Dictionary(move(block), page_hdr.dictionary_page_header.num_values);
 		break;
 	default:
 		break; // ignore INDEX page type and any other custom extensions
+	}
+}
+
+void ColumnReader::PreparePageV2(PageHeader &page_hdr) {
+	// FIXME this is copied from the other prepare, merge the decomp part
+
+	D_ASSERT(page_hdr.type == PageType::DATA_PAGE_V2);
+
+	auto &trans = (ThriftFileTransport &)*protocol->getTransport();
+
+	block = make_shared<ResizeableBuffer>(reader.allocator, page_hdr.uncompressed_page_size + 1);
+	// copy repeats & defines as-is because FOR SOME REASON they are uncompressed
+	auto uncompressed_bytes = page_hdr.data_page_header_v2.repetition_levels_byte_length +
+	                          page_hdr.data_page_header_v2.definition_levels_byte_length;
+	auto possibly_compressed_bytes = page_hdr.compressed_page_size - uncompressed_bytes;
+	trans.read((uint8_t *)block->ptr, uncompressed_bytes);
+
+	switch (chunk->meta_data.codec) {
+	case CompressionCodec::UNCOMPRESSED:
+		trans.read(((uint8_t *)block->ptr) + uncompressed_bytes, possibly_compressed_bytes);
+		break;
+
+	case CompressionCodec::SNAPPY: {
+		// TODO move allocation outta here
+		ResizeableBuffer compressed_bytes_buffer(reader.allocator, possibly_compressed_bytes);
+		trans.read((uint8_t *)compressed_bytes_buffer.ptr, possibly_compressed_bytes);
+
+		auto res = duckdb_snappy::RawUncompress((const char *)compressed_bytes_buffer.ptr, possibly_compressed_bytes,
+		                                        ((char *)block->ptr) + uncompressed_bytes);
+		if (!res) {
+			throw std::runtime_error("Decompression failure");
+		}
+		break;
+	}
+
+	default: {
+		std::stringstream codec_name;
+		codec_name << chunk->meta_data.codec;
+		throw std::runtime_error("Unsupported compression codec \"" + codec_name.str() +
+		                         "\". Supported options are uncompressed, gzip or snappy");
+		break;
+	}
 	}
 }
 
@@ -142,6 +201,7 @@ void ColumnReader::PreparePage(idx_t compressed_page_size, idx_t uncompressed_pa
 	block = make_shared<ResizeableBuffer>(reader.allocator, compressed_page_size + 1);
 	trans.read((uint8_t *)block->ptr, compressed_page_size);
 
+	// TODO this allocation should probably be avoided
 	shared_ptr<ResizeableBuffer> unpacked_block;
 	if (chunk->meta_data.codec != CompressionCodec::UNCOMPRESSED) {
 		unpacked_block = make_shared<ResizeableBuffer>(reader.allocator, uncompressed_page_size + 1);
@@ -224,7 +284,6 @@ void ColumnReader::PrepareDataPage(PageHeader &page_hdr) {
 	switch (page_encoding) {
 	case Encoding::RLE_DICTIONARY:
 	case Encoding::PLAIN_DICTIONARY: {
-		// TODO there seems to be some confusion whether this is in the bytes for v2
 		// where is it otherwise??
 		auto dict_width = block->read<uint8_t>();
 		// TODO somehow dict_width can be 0 ?
@@ -232,6 +291,47 @@ void ColumnReader::PrepareDataPage(PageHeader &page_hdr) {
 		block->inc(block->len);
 		break;
 	}
+	case Encoding::DELTA_BINARY_PACKED: {
+		dbp_decoder = make_unique<DbpDecoder>((const uint8_t *)block->ptr, block->len);
+		block->inc(block->len);
+		break;
+	}
+		/*
+	case Encoding::DELTA_BYTE_ARRAY: {
+		dbp_decoder = make_unique<DbpDecoder>((const uint8_t *)block->ptr, block->len);
+		auto prefix_buffer = make_shared<ResizeableBuffer>();
+		prefix_buffer->resize(reader.allocator, sizeof(uint32_t) * page_hdr.data_page_header_v2.num_rows);
+
+		auto suffix_buffer = make_shared<ResizeableBuffer>();
+		suffix_buffer->resize(reader.allocator, sizeof(uint32_t) * page_hdr.data_page_header_v2.num_rows);
+
+		dbp_decoder->GetBatch<uint32_t>(prefix_buffer->ptr, page_hdr.data_page_header_v2.num_rows);
+		auto buffer_after_prefixes = dbp_decoder->BufferPtr();
+
+		dbp_decoder = make_unique<DbpDecoder>((const uint8_t *)buffer_after_prefixes.ptr, buffer_after_prefixes.len);
+		dbp_decoder->GetBatch<uint32_t>(suffix_buffer->ptr, page_hdr.data_page_header_v2.num_rows);
+
+		auto string_buffer = dbp_decoder->BufferPtr();
+
+		for (idx_t i = 0 ; i < page_hdr.data_page_header_v2.num_rows; i++) {
+		    auto suffix_length = (uint32_t*) suffix_buffer->ptr;
+		    string str( suffix_length[i] + 1, '\0');
+		    string_buffer.copy_to((char*) str.data(), suffix_length[i]);
+		    printf("%s\n", str.c_str());
+		}
+		throw std::runtime_error("eek");
+
+
+		// This is also known as incremental encoding or front compression: for each element in a sequence of strings,
+		// store the prefix length of the previous entry plus the suffix. This is stored as a sequence of delta-encoded
+		// prefix lengths (DELTA_BINARY_PACKED), followed by the suffixes encoded as delta length byte arrays
+		// (DELTA_LENGTH_BYTE_ARRAY). DELTA_LENGTH_BYTE_ARRAY: The encoded data would be DeltaEncoding(5, 5, 6, 6)
+		// "HelloWorldFoobarABCDEF"
+
+		// TODO actually do something here
+		break;
+	}
+		 */
 	case Encoding::PLAIN:
 		// nothing to do here, will be read directly below
 		break;
@@ -270,21 +370,42 @@ idx_t ColumnReader::Read(uint64_t num_values, parquet_filter_t &filter, uint8_t 
 			defined_decoder->GetBatch<uint8_t>((char *)define_out + result_offset, read_now);
 		}
 
-		if (dict_decoder) {
-			// we need the null count because the offsets and plain values have no entries for nulls
-			idx_t null_count = 0;
-			if (HasDefines()) {
-				for (idx_t i = 0; i < read_now; i++) {
-					if (define_out[i + result_offset] != max_define) {
-						null_count++;
-					}
+		idx_t null_count = 0;
+
+		if ((dict_decoder || dbp_decoder) && HasDefines()) {
+			// we need the null count because the dictionary offsets have no entries for nulls
+			for (idx_t i = 0; i < read_now; i++) {
+				if (define_out[i + result_offset] != max_define) {
+					null_count++;
 				}
 			}
+		}
 
+		if (dict_decoder) {
 			offset_buffer.resize(reader.allocator, sizeof(uint32_t) * (read_now - null_count));
 			dict_decoder->GetBatch<uint32_t>(offset_buffer.ptr, read_now - null_count);
 			DictReference(result);
 			Offsets((uint32_t *)offset_buffer.ptr, define_out, read_now, filter, result_offset, result);
+		} else if (dbp_decoder) {
+			// TODO keep this in the state
+			auto read_buf = make_shared<ResizeableBuffer>();
+
+			switch (type.id()) {
+			case LogicalTypeId::INTEGER:
+				read_buf->resize(reader.allocator, sizeof(int32_t) * (read_now - null_count));
+				dbp_decoder->GetBatch<int32_t>(read_buf->ptr, read_now - null_count);
+
+				break;
+			case LogicalTypeId::BIGINT:
+				read_buf->resize(reader.allocator, sizeof(int64_t) * (read_now - null_count));
+				dbp_decoder->GetBatch<int64_t>(read_buf->ptr, read_now - null_count);
+				break;
+
+			default:
+				throw std::runtime_error("DELTA_BINARY_PACKED should only be INT32 or INT64");
+			}
+			// Plain() will put NULLs in the right place
+			Plain(read_buf, define_out, read_now, filter, result_offset, result);
 		} else {
 			PlainReference(block, result);
 			Plain(block, define_out, read_now, filter, result_offset, result);
@@ -513,6 +634,64 @@ ListColumnReader::ListColumnReader(ParquetReader &reader, LogicalType type_p, co
 	child_filter.set();
 }
 
+// ListColumnReader::Read(uint64_t num_values, parquet_filter_t &filter, uint8_t *define_out, uint8_t *repeat_out,
+//                             Vector &result_out)
+void ListColumnReader::Skip(idx_t num_values) {
+	parquet_filter_t filter;
+	auto define_out = unique_ptr<uint8_t[]>(new uint8_t[num_values]);
+	auto repeat_out = unique_ptr<uint8_t[]>(new uint8_t[num_values]);
+	Vector result_out(Type());
+	Read(num_values, filter, define_out.get(), repeat_out.get(), result_out);
+}
+//===--------------------------------------------------------------------===//
+// Cast Column Reader
+//===--------------------------------------------------------------------===//
+CastColumnReader::CastColumnReader(unique_ptr<ColumnReader> child_reader_p, LogicalType target_type_p)
+    : ColumnReader(child_reader_p->Reader(), move(target_type_p), child_reader_p->Schema(), child_reader_p->FileIdx(),
+                   child_reader_p->MaxDefine(), child_reader_p->MaxRepeat()),
+      child_reader(move(child_reader_p)) {
+	vector<LogicalType> intermediate_types {child_reader->Type()};
+	intermediate_chunk.Initialize(intermediate_types);
+}
+
+unique_ptr<BaseStatistics> CastColumnReader::Stats(const std::vector<ColumnChunk> &columns) {
+	// casting stats is not supported (yet)
+	return nullptr;
+}
+
+void CastColumnReader::InitializeRead(const std::vector<ColumnChunk> &columns, TProtocol &protocol_p) {
+	child_reader->InitializeRead(columns, protocol_p);
+}
+
+idx_t CastColumnReader::Read(uint64_t num_values, parquet_filter_t &filter, uint8_t *define_out, uint8_t *repeat_out,
+                             Vector &result) {
+	intermediate_chunk.Reset();
+	auto &intermediate_vector = intermediate_chunk.data[0];
+
+	auto amount = child_reader->Read(num_values, filter, define_out, repeat_out, intermediate_vector);
+	if (!filter.all()) {
+		// work-around for filters: set all values that are filtered to NULL to prevent the cast from failing on
+		// uninitialized data
+		intermediate_vector.Normalify(amount);
+		auto &validity = FlatVector::Validity(intermediate_vector);
+		for (idx_t i = 0; i < amount; i++) {
+			if (!filter[i]) {
+				validity.SetInvalid(i);
+			}
+		}
+	}
+	VectorOperations::Cast(intermediate_vector, result, amount);
+	return amount;
+}
+
+void CastColumnReader::Skip(idx_t num_values) {
+	child_reader->Skip(num_values);
+}
+
+idx_t CastColumnReader::GroupRowsAvailable() {
+	return child_reader->GroupRowsAvailable();
+}
+
 //===--------------------------------------------------------------------===//
 // Struct Column Reader
 //===--------------------------------------------------------------------===//
@@ -560,7 +739,9 @@ idx_t StructColumnReader::Read(uint64_t num_values, parquet_filter_t &filter, ui
 }
 
 void StructColumnReader::Skip(idx_t num_values) {
-	throw InternalException("Skip not implemented for StructColumnReader");
+	for (auto &child_reader : child_readers) {
+		child_reader->Skip(num_values);
+	}
 }
 
 idx_t StructColumnReader::GroupRowsAvailable() {

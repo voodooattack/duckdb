@@ -8,6 +8,7 @@
 #include "duckdb/main/query_result.hpp"
 #include "test_helpers.hpp"
 #include "duckdb/parser/parsed_data/copy_info.hpp"
+#include "duckdb/main/client_context.hpp"
 
 #include <cmath>
 #include <fstream>
@@ -71,12 +72,11 @@ string TestCreatePath(string suffix) {
 	return fs->JoinPath(TestDirectoryPath(), suffix);
 }
 
-bool TestIsInternalError(const string &error) {
-	if (StringUtil::Contains(error, "Unoptimized Result differs from original result!")) {
-		return true;
-	}
-	if (StringUtil::Contains(error, "INTERNAL")) {
-		return true;
+bool TestIsInternalError(unordered_set<string> &internal_error_messages, const string &error) {
+	for (auto &error_message : internal_error_messages) {
+		if (StringUtil::Contains(error, error_message)) {
+			return true;
+		}
 	}
 	return false;
 }
@@ -157,7 +157,7 @@ bool CHECK_COLUMN(QueryResult &result_, size_t column_number, vector<duckdb::Val
 		}
 		for (size_t j = 0; j < chunk.size(); j++) {
 			// NULL <> NULL, hence special handling
-			if (vector.GetValue(j).is_null && values[i + j].is_null) {
+			if (vector.GetValue(j).IsNull() && values[i + j].IsNull()) {
 				continue;
 			}
 

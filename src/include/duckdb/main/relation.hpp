@@ -14,28 +14,37 @@
 #include "duckdb/common/winapi.hpp"
 #include "duckdb/main/query_result.hpp"
 #include "duckdb/parser/column_definition.hpp"
-#include "duckdb/common/unordered_map.hpp"
+#include "duckdb/common/named_parameter_map.hpp"
+#include "duckdb/main/client_context.hpp"
 
 #include <memory>
 
 namespace duckdb {
 struct BoundStatement;
 
-class ClientContext;
+class ClientContextWrapper;
 class Binder;
 class LogicalOperator;
 class QueryNode;
 class TableRef;
 
+class ExtraDependencies {};
+
 class Relation : public std::enable_shared_from_this<Relation> {
 public:
-	DUCKDB_API Relation(ClientContext &context, RelationType type) : context(context), type(type) {
+	DUCKDB_API Relation(const std::shared_ptr<ClientContext> &context, RelationType type)
+	    : context(context), type(type) {
+	}
+	DUCKDB_API Relation(ClientContextWrapper &context, RelationType type) : context(context.GetContext()), type(type) {
 	}
 	DUCKDB_API virtual ~Relation() {
 	}
 
-	ClientContext &context;
+	ClientContextWrapper context;
+
 	RelationType type;
+
+	unique_ptr<ExtraDependencies> extra_dependencies;
 
 public:
 	DUCKDB_API virtual const vector<ColumnDefinition> &Columns() = 0;
@@ -85,6 +94,9 @@ public:
 	DUCKDB_API shared_ptr<Relation> Join(const shared_ptr<Relation> &other, const string &condition,
 	                                     JoinType type = JoinType::INNER);
 
+	// CROSS PRODUCT operation
+	DUCKDB_API shared_ptr<Relation> CrossProduct(const shared_ptr<Relation> &other);
+
 	// SET operations
 	DUCKDB_API shared_ptr<Relation> Union(const shared_ptr<Relation> &other);
 	DUCKDB_API shared_ptr<Relation> Except(const shared_ptr<Relation> &other);
@@ -122,7 +134,7 @@ public:
 	//! Create a relation from calling a table in/out function on the input relation
 	DUCKDB_API shared_ptr<Relation> TableFunction(const std::string &fname, const vector<Value> &values);
 	DUCKDB_API shared_ptr<Relation> TableFunction(const std::string &fname, const vector<Value> &values,
-	                                              const unordered_map<string, Value> &named_parameters);
+	                                              const named_parameter_map_t &named_parameters);
 
 public:
 	//! Whether or not the relation inherits column bindings from its child or not, only relevant for binding

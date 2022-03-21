@@ -92,7 +92,7 @@ struct ArrowScanState : public FunctionOperatorData {
 	explicit ArrowScanState(unique_ptr<ArrowArrayWrapper> current_chunk) : chunk(move(current_chunk)) {
 	}
 	unique_ptr<ArrowArrayStreamWrapper> stream;
-	unique_ptr<ArrowArrayWrapper> chunk;
+	shared_ptr<ArrowArrayWrapper> chunk;
 	idx_t chunk_offset = 0;
 	vector<column_t> column_ids;
 	//! Store child vectors for Arrow Dictionary Vectors (col-idx,vector)
@@ -114,11 +114,8 @@ public:
 
 private:
 	//! Binds an arrow table
-	static unique_ptr<FunctionData> ArrowScanBind(ClientContext &context, vector<Value> &inputs,
-	                                              unordered_map<string, Value> &named_parameters,
-	                                              vector<LogicalType> &input_table_types,
-	                                              vector<string> &input_table_names, vector<LogicalType> &return_types,
-	                                              vector<string> &names);
+	static unique_ptr<FunctionData> ArrowScanBind(ClientContext &context, TableFunctionBindInput &input,
+	                                              vector<LogicalType> &return_types, vector<string> &names);
 	//! Actual conversion from Arrow to DuckDB
 	static void ArrowToDuckDB(ArrowScanState &scan_state,
 	                          std::unordered_map<idx_t, unique_ptr<ArrowConvertData>> &arrow_convert_data,

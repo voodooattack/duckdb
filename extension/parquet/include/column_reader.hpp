@@ -13,6 +13,7 @@
 #include "resizable_buffer.hpp"
 
 #include "parquet_rle_bp_decoder.hpp"
+#include "parquet_dbp_decoder.hpp"
 #include "parquet_statistics.hpp"
 
 #include "duckdb.hpp"
@@ -55,12 +56,16 @@ public:
 
 	virtual void Skip(idx_t num_values);
 
-	const LogicalType &Type();
-	const SchemaElement &Schema();
+	ParquetReader &Reader();
+	const LogicalType &Type() const;
+	const SchemaElement &Schema() const;
+	idx_t FileIdx() const;
+	idx_t MaxDefine() const;
+	idx_t MaxRepeat() const;
 
 	virtual idx_t GroupRowsAvailable();
 
-	unique_ptr<BaseStatistics> Stats(const std::vector<ColumnChunk> &columns);
+	virtual unique_ptr<BaseStatistics> Stats(const std::vector<ColumnChunk> &columns);
 
 protected:
 	// readers that use the default Read() need to implement those
@@ -96,6 +101,7 @@ private:
 	void PrepareRead(parquet_filter_t &filter);
 	void PreparePage(idx_t compressed_page_size, idx_t uncompressed_page_size);
 	void PrepareDataPage(PageHeader &page_hdr);
+	void PreparePageV2(PageHeader &page_hdr);
 
 	const duckdb_parquet::format::ColumnChunk *chunk;
 
@@ -111,6 +117,7 @@ private:
 	unique_ptr<RleBpDecoder> dict_decoder;
 	unique_ptr<RleBpDecoder> defined_decoder;
 	unique_ptr<RleBpDecoder> repeated_decoder;
+	unique_ptr<DbpDecoder> dbp_decoder;
 
 	// dummies for Skip()
 	parquet_filter_t none_filter;

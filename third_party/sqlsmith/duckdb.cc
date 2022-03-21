@@ -15,20 +15,20 @@ using namespace std;
 
 static regex e_syntax("syntax error at or near .*");
 
-duckdb_connection::duckdb_connection(string &conninfo) {
+sqlsmith_duckdb_connection::sqlsmith_duckdb_connection(string &conninfo) {
 	// in-memory database
 	database = make_unique<DuckDB>(nullptr);
 	connection = make_unique<Connection>(*database);
 }
 
-void duckdb_connection::q(const char *query) {
+void sqlsmith_duckdb_connection::q(const char *query) {
 	auto result = connection->Query(query);
 	if (!result->success) {
 		throw runtime_error(result->error);
 	}
 }
 
-schema_duckdb::schema_duckdb(std::string &conninfo, bool no_catalog) : duckdb_connection(conninfo) {
+schema_duckdb::schema_duckdb(std::string &conninfo, bool no_catalog) : sqlsmith_duckdb_connection(conninfo) {
 	// generate empty TPC-H schema
 	connection->Query("CALL dbgen(sf=0)");
 
@@ -38,8 +38,8 @@ schema_duckdb::schema_duckdb(std::string &conninfo, bool no_catalog) : duckdb_co
 		throw runtime_error(result->error);
 	}
 	for (size_t i = 0; i < result->collection.Count(); i++) {
-		auto type = result->collection.GetValue(0, i).str_value;
-		auto name = result->collection.GetValue(2, i).str_value;
+		auto type = StringValue::Get(result->collection.GetValue(0, i));
+		auto name = StringValue::Get(result->collection.GetValue(2, i));
 		bool view = type == "view";
 		table tab(name, "main", !view, !view);
 		tables.push_back(tab);
@@ -58,8 +58,8 @@ schema_duckdb::schema_duckdb(std::string &conninfo, bool no_catalog) : duckdb_co
 			throw runtime_error(result->error);
 		}
 		for (size_t i = 0; i < result->collection.Count(); i++) {
-			auto name = result->collection.GetValue(1, i).str_value;
-			auto type = result->collection.GetValue(2, i).str_value;
+			auto name = StringValue::Get(result->collection.GetValue(1, i));
+			auto type = StringValue::Get(result->collection.GetValue(2, i));
 			column c(name, sqltype::get(type));
 			t->columns().push_back(c);
 		}
@@ -202,7 +202,7 @@ schema_duckdb::schema_duckdb(std::string &conninfo, bool no_catalog) : duckdb_co
 	generate_indexes();
 }
 
-dut_duckdb::dut_duckdb(std::string &conninfo) : duckdb_connection(conninfo) {
+dut_duckdb::dut_duckdb(std::string &conninfo) : sqlsmith_duckdb_connection(conninfo) {
 	cerr << "Generating TPC-H...";
 	connection->Query("CALL dbgen(sf=0.01)");
 	cerr << "done." << endl;

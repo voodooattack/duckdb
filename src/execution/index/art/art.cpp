@@ -10,9 +10,9 @@
 
 namespace duckdb {
 
-ART::ART(const vector<column_t> &column_ids, const vector<unique_ptr<Expression>> &unbound_expressions, bool is_unique,
-         bool is_primary)
-    : Index(IndexType::ART, column_ids, unbound_expressions, is_unique, is_primary) {
+ART::ART(const vector<column_t> &column_ids, const vector<unique_ptr<Expression>> &unbound_expressions,
+         IndexConstraintType constraint_type)
+    : Index(IndexType::ART, column_ids, unbound_expressions, constraint_type) {
 	tree = nullptr;
 	expression_result.Initialize(logical_types);
 	is_little_endian = IsLittleEndian();
@@ -266,43 +266,19 @@ bool ART::Append(IndexLock &lock, DataChunk &appended_data, Vector &row_identifi
 }
 
 void ART::VerifyAppend(DataChunk &chunk) {
-	if (!is_unique) {
-		return;
-	}
+	VerifyExistence(chunk, VerifyExistenceType::APPEND);
+}
 
-	DataChunk expression_result;
-	expression_result.Initialize(logical_types);
+void ART::VerifyAppendForeignKey(DataChunk &chunk, string *err_msg_ptr) {
+	VerifyExistence(chunk, VerifyExistenceType::APPEND_FK, err_msg_ptr);
+}
 
-	// unique index, check
-	lock_guard<mutex> l(lock);
-	// first resolve the expressions for the index
-	ExecuteExpressions(chunk, expression_result);
-
-	// generate the keys for the given input
-	vector<unique_ptr<Key>> keys;
-	GenerateKeys(expression_result, keys);
-
-	for (idx_t i = 0; i < chunk.size(); i++) {
-		if (!keys[i]) {
-			continue;
-		}
-		if (Lookup(tree, *keys[i], 0) != nullptr) {
-			string key_name;
-			for (idx_t k = 0; k < expression_result.ColumnCount(); k++) {
-				if (k > 0) {
-					key_name += ", ";
-				}
-				key_name += unbound_expressions[k]->GetName() + ": " + expression_result.data[k].GetValue(i).ToString();
-			}
-			// node already exists in tree
-			throw ConstraintException("duplicate key \"%s\" violates %s constraint", key_name,
-			                          is_primary ? "primary key" : "unique");
-		}
-	}
+void ART::VerifyDeleteForeignKey(DataChunk &chunk, string *err_msg_ptr) {
+	VerifyExistence(chunk, VerifyExistenceType::DELETE_FK, err_msg_ptr);
 }
 
 bool ART::InsertToLeaf(Leaf &leaf, row_t row_id) {
-	if (is_unique && leaf.num_elements != 0) {
+	if (IsUnique() && leaf.num_elements != 0) {
 		return false;
 	}
 	leaf.Insert(row_id);
@@ -464,32 +440,31 @@ static unique_ptr<Key> CreateKey(ART &art, PhysicalType type, Value &value) {
 	D_ASSERT(type == value.type().InternalType());
 	switch (type) {
 	case PhysicalType::BOOL:
-		return Key::CreateKey<bool>(value.value_.boolean, art.is_little_endian);
+		return Key::CreateKey<bool>(value, art.is_little_endian);
 	case PhysicalType::INT8:
-		return Key::CreateKey<int8_t>(value.value_.tinyint, art.is_little_endian);
+		return Key::CreateKey<int8_t>(value, art.is_little_endian);
 	case PhysicalType::INT16:
-		return Key::CreateKey<int16_t>(value.value_.smallint, art.is_little_endian);
+		return Key::CreateKey<int16_t>(value, art.is_little_endian);
 	case PhysicalType::INT32:
-		return Key::CreateKey<int32_t>(value.value_.integer, art.is_little_endian);
+		return Key::CreateKey<int32_t>(value, art.is_little_endian);
 	case PhysicalType::INT64:
-		return Key::CreateKey<int64_t>(value.value_.bigint, art.is_little_endian);
+		return Key::CreateKey<int64_t>(value, art.is_little_endian);
 	case PhysicalType::UINT8:
-		return Key::CreateKey<uint8_t>(value.value_.utinyint, art.is_little_endian);
+		return Key::CreateKey<uint8_t>(value, art.is_little_endian);
 	case PhysicalType::UINT16:
-		return Key::CreateKey<uint16_t>(value.value_.usmallint, art.is_little_endian);
+		return Key::CreateKey<uint16_t>(value, art.is_little_endian);
 	case PhysicalType::UINT32:
-		return Key::CreateKey<uint32_t>(value.value_.uinteger, art.is_little_endian);
+		return Key::CreateKey<uint32_t>(value, art.is_little_endian);
 	case PhysicalType::UINT64:
-		return Key::CreateKey<uint64_t>(value.value_.ubigint, art.is_little_endian);
+		return Key::CreateKey<uint64_t>(value, art.is_little_endian);
 	case PhysicalType::INT128:
-		return Key::CreateKey<hugeint_t>(value.value_.hugeint, art.is_little_endian);
+		return Key::CreateKey<hugeint_t>(value, art.is_little_endian);
 	case PhysicalType::FLOAT:
-		return Key::CreateKey<float>(value.value_.float_, art.is_little_endian);
+		return Key::CreateKey<float>(value, art.is_little_endian);
 	case PhysicalType::DOUBLE:
-		return Key::CreateKey<double>(value.value_.double_, art.is_little_endian);
+		return Key::CreateKey<double>(value, art.is_little_endian);
 	case PhysicalType::VARCHAR:
-		return Key::CreateKey<string_t>(string_t(value.str_value.c_str(), value.str_value.size()),
-		                                art.is_little_endian);
+		return Key::CreateKey<string_t>(value, art.is_little_endian);
 	default:
 		throw InternalException("Invalid type for index");
 	}
@@ -828,7 +803,7 @@ bool ART::Scan(Transaction &transaction, DataTable &table, IndexScanState &table
 
 	vector<row_t> row_ids;
 	bool success = true;
-	if (state->values[1].is_null) {
+	if (state->values[1].IsNull()) {
 		lock_guard<mutex> l(lock);
 		// single predicate
 		switch (state->expressions[0]) {
@@ -876,6 +851,70 @@ bool ART::Scan(Transaction &transaction, DataTable &table, IndexScanState &table
 		}
 	}
 	return true;
+}
+
+void ART::VerifyExistence(DataChunk &chunk, VerifyExistenceType verify_type, string *err_msg_ptr) {
+	if (verify_type != VerifyExistenceType::DELETE_FK && !IsUnique()) {
+		return;
+	}
+
+	DataChunk expression_result;
+	expression_result.Initialize(logical_types);
+
+	// unique index, check
+	lock_guard<mutex> l(lock);
+	// first resolve the expressions for the index
+	ExecuteExpressions(chunk, expression_result);
+
+	// generate the keys for the given input
+	vector<unique_ptr<Key>> keys;
+	GenerateKeys(expression_result, keys);
+
+	for (idx_t i = 0; i < chunk.size(); i++) {
+		if (!keys[i]) {
+			continue;
+		}
+		Node *node_ptr = Lookup(tree, *keys[i], 0);
+		bool throw_exception =
+		    verify_type == VerifyExistenceType::APPEND_FK ? node_ptr == nullptr : node_ptr != nullptr;
+		if (!throw_exception) {
+			continue;
+		}
+		string key_name;
+		for (idx_t k = 0; k < expression_result.ColumnCount(); k++) {
+			if (k > 0) {
+				key_name += ", ";
+			}
+			key_name += unbound_expressions[k]->GetName() + ": " + expression_result.data[k].GetValue(i).ToString();
+		}
+		string exception_msg;
+		switch (verify_type) {
+		case VerifyExistenceType::APPEND: {
+			// node already exists in tree
+			string type = IsPrimary() ? "primary key" : "unique";
+			exception_msg = "duplicate key \"" + key_name + "\" violates ";
+			exception_msg += type + " constraint";
+			break;
+		}
+		case VerifyExistenceType::APPEND_FK: {
+			// found node no exists in tree
+			exception_msg =
+			    "violates foreign key constraint because key \"" + key_name + "\" no exist in referenced table";
+			break;
+		}
+		case VerifyExistenceType::DELETE_FK: {
+			// found node exists in tree
+			exception_msg =
+			    "violates foreign key constraint because key \"" + key_name + "\" exist in table has foreign key";
+			break;
+		}
+		}
+		if (err_msg_ptr) {
+			err_msg_ptr[i] = exception_msg;
+		} else {
+			throw ConstraintException(exception_msg);
+		}
+	}
 }
 
 } // namespace duckdb

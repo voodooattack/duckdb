@@ -19,7 +19,6 @@ namespace duckdb {
 
 struct DuckDBPyRelation;
 struct DuckDBPyResult;
-
 class RegisteredObject {
 public:
 	explicit RegisteredObject(py::object obj_p) : obj(move(obj_p)) {
@@ -42,13 +41,16 @@ public:
 struct DuckDBPyConnection {
 public:
 	shared_ptr<DuckDB> database;
-	unique_ptr<Connection> connection;
+	shared_ptr<Connection> connection;
 	unordered_map<string, unique_ptr<RegisteredObject>> registered_objects;
 	unique_ptr<DuckDBPyResult> result;
 	vector<shared_ptr<DuckDBPyConnection>> cursors;
 	std::thread::id thread_id = std::this_thread::get_id();
+	bool check_same_thread = true;
 
 public:
+	explicit DuckDBPyConnection(std::thread::id thread_id_p = std::this_thread::get_id()) : thread_id(thread_id_p) {
+	}
 	static void Initialize(py::handle &m);
 	static void Cleanup();
 
@@ -64,6 +66,7 @@ public:
 	                                         const idx_t rows_per_tuple = 100000);
 
 	unique_ptr<DuckDBPyRelation> FromQuery(const string &query, const string &alias = "query_relation");
+	unique_ptr<DuckDBPyRelation> RunQuery(const string &query, const string &alias = "query_relation");
 
 	unique_ptr<DuckDBPyRelation> Table(const string &tname);
 
@@ -80,6 +83,10 @@ public:
 	unique_ptr<DuckDBPyRelation> FromParquet(const string &filename, bool binary_as_string);
 
 	unique_ptr<DuckDBPyRelation> FromArrowTable(py::object &table, const idx_t rows_per_tuple = 1000000);
+
+	unique_ptr<DuckDBPyRelation> FromSubstrait(py::bytes &proto);
+
+	unique_ptr<DuckDBPyRelation> GetSubstrait(const string &query);
 
 	DuckDBPyConnection *UnregisterPythonObject(const string &name);
 
@@ -106,13 +113,12 @@ public:
 
 	py::object FetchDFChunk(const idx_t vectors_per_chunk = 1) const;
 
-	py::object FetchArrow();
+	py::object FetchArrow(idx_t chunk_size);
 
-	py::object FetchArrowChunk(const idx_t vectors_per_chunk, bool return_table) const;
+	py::object FetchRecordBatchReader(const idx_t chunk_size) const;
 
-	py::object FetchRecordBatchReader(const idx_t vectors_per_chunk) const;
-
-	static shared_ptr<DuckDBPyConnection> Connect(const string &database, bool read_only, const py::dict &config);
+	static shared_ptr<DuckDBPyConnection> Connect(const string &database, bool read_only, const py::dict &config,
+	                                              bool check_same_thread);
 
 	static vector<Value> TransformPythonParamList(py::handle params);
 

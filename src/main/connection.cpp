@@ -26,6 +26,10 @@ Connection::Connection(DatabaseInstance &database) : context(make_shared<ClientC
 Connection::Connection(DuckDB &database) : Connection(*database.instance) {
 }
 
+Connection::~Connection() {
+	ConnectionManager::Get(*context->db).RemoveConnection(*context);
+}
+
 string Connection::GetProfilingInformation(ProfilerPrintFormat format) {
 	auto &profiler = QueryProfiler::Get(*context);
 	if (format == ProfilerPrintFormat::JSON) {
@@ -134,7 +138,7 @@ shared_ptr<Relation> Connection::Table(const string &schema_name, const string &
 	if (!table_info) {
 		throw Exception("Table does not exist!");
 	}
-	return make_shared<TableRelation>(*context, move(table_info));
+	return make_shared<TableRelation>(context, move(table_info));
 }
 
 shared_ptr<Relation> Connection::View(const string &tname) {
@@ -142,22 +146,22 @@ shared_ptr<Relation> Connection::View(const string &tname) {
 }
 
 shared_ptr<Relation> Connection::View(const string &schema_name, const string &table_name) {
-	return make_shared<ViewRelation>(*context, schema_name, table_name);
+	return make_shared<ViewRelation>(context, schema_name, table_name);
 }
 
 shared_ptr<Relation> Connection::TableFunction(const string &fname) {
 	vector<Value> values;
-	unordered_map<string, Value> named_parameters;
+	named_parameter_map_t named_parameters;
 	return TableFunction(fname, values, named_parameters);
 }
 
 shared_ptr<Relation> Connection::TableFunction(const string &fname, const vector<Value> &values,
-                                               const unordered_map<string, Value> &named_parameters) {
-	return make_shared<TableFunctionRelation>(*context, fname, values, named_parameters);
+                                               const named_parameter_map_t &named_parameters) {
+	return make_shared<TableFunctionRelation>(context, fname, values, named_parameters);
 }
 
 shared_ptr<Relation> Connection::TableFunction(const string &fname, const vector<Value> &values) {
-	return make_shared<TableFunctionRelation>(*context, fname, values);
+	return make_shared<TableFunctionRelation>(context, fname, values);
 }
 
 shared_ptr<Relation> Connection::Values(const vector<vector<Value>> &values) {
@@ -167,7 +171,7 @@ shared_ptr<Relation> Connection::Values(const vector<vector<Value>> &values) {
 
 shared_ptr<Relation> Connection::Values(const vector<vector<Value>> &values, const vector<string> &column_names,
                                         const string &alias) {
-	return make_shared<ValueRelation>(*context, values, column_names, alias);
+	return make_shared<ValueRelation>(context, values, column_names, alias);
 }
 
 shared_ptr<Relation> Connection::Values(const string &values) {
@@ -176,7 +180,7 @@ shared_ptr<Relation> Connection::Values(const string &values) {
 }
 
 shared_ptr<Relation> Connection::Values(const string &values, const vector<string> &column_names, const string &alias) {
-	return make_shared<ValueRelation>(*context, values, column_names, alias);
+	return make_shared<ValueRelation>(context, values, column_names, alias);
 }
 
 shared_ptr<Relation> Connection::ReadCSV(const string &csv_file) {
@@ -188,28 +192,32 @@ shared_ptr<Relation> Connection::ReadCSV(const string &csv_file) {
 	for (idx_t i = 0; i < reader.sql_types.size(); i++) {
 		column_list.emplace_back(reader.col_names[i], reader.sql_types[i]);
 	}
-	return make_shared<ReadCSVRelation>(*context, csv_file, move(column_list), true);
+	return make_shared<ReadCSVRelation>(context, csv_file, move(column_list), true);
 }
 
 shared_ptr<Relation> Connection::ReadCSV(const string &csv_file, const vector<string> &columns) {
 	// parse columns
 	vector<ColumnDefinition> column_list;
 	for (auto &column : columns) {
-		auto col_list = Parser::ParseColumnList(column);
+		auto col_list = Parser::ParseColumnList(column, context->GetParserOptions());
 		if (col_list.size() != 1) {
 			throw ParserException("Expected a single column definition");
 		}
 		column_list.push_back(move(col_list[0]));
 	}
-	return make_shared<ReadCSVRelation>(*context, csv_file, move(column_list));
+	return make_shared<ReadCSVRelation>(context, csv_file, move(column_list));
 }
 
 unordered_set<string> Connection::GetTableNames(const string &query) {
 	return context->GetTableNames(query);
 }
 
-shared_ptr<Relation> Connection::RelationFromQuery(const string &query, const string &alias) {
-	return make_shared<QueryRelation>(*context, query, alias);
+shared_ptr<Relation> Connection::RelationFromQuery(const string &query, const string &alias, const string &error) {
+	return RelationFromQuery(QueryRelation::ParseStatement(*context, query, error), alias);
+}
+
+shared_ptr<Relation> Connection::RelationFromQuery(unique_ptr<SelectStatement> select_stmt, const string &alias) {
+	return make_shared<QueryRelation>(context, move(select_stmt), alias);
 }
 
 void Connection::BeginTransaction() {

@@ -142,13 +142,21 @@ using duckdb::UnsafeFetch;
 template <class SOURCE_TYPE, class RESULT_TYPE, class OP>
 RESULT_TYPE TryCastCInternal(duckdb_result *result, idx_t col, idx_t row) {
 	RESULT_TYPE result_value;
-	if (!OP::template Operation<SOURCE_TYPE, RESULT_TYPE>(UnsafeFetch<SOURCE_TYPE>(result, col, row), result_value)) {
+	try {
+		if (!OP::template Operation<SOURCE_TYPE, RESULT_TYPE>(UnsafeFetch<SOURCE_TYPE>(result, col, row),
+		                                                      result_value)) {
+			return FetchDefaultValue::Operation<RESULT_TYPE>();
+		}
+	} catch (...) {
 		return FetchDefaultValue::Operation<RESULT_TYPE>();
 	}
 	return result_value;
 }
 
 static bool CanFetchValue(duckdb_result *result, idx_t col, idx_t row) {
+	if (!duckdb::deprecated_materialize_result(result)) {
+		return false;
+	}
 	if (!result || col >= result->__deprecated_column_count || row >= result->__deprecated_row_count) {
 		return false;
 	}
@@ -194,6 +202,8 @@ static RESULT_TYPE GetInternalCValue(duckdb_result *result, idx_t col, idx_t row
 		return TryCastCInternal<timestamp_t, RESULT_TYPE, OP>(result, col, row);
 	case DUCKDB_TYPE_HUGEINT:
 		return TryCastCInternal<hugeint_t, RESULT_TYPE, OP>(result, col, row);
+	case DUCKDB_TYPE_DECIMAL:
+		return TryCastCInternal<hugeint_t, RESULT_TYPE, OP>(result, col, row);
 	case DUCKDB_TYPE_INTERVAL:
 		return TryCastCInternal<interval_t, RESULT_TYPE, OP>(result, col, row);
 	case DUCKDB_TYPE_VARCHAR:
@@ -228,6 +238,18 @@ int32_t duckdb_value_int32(duckdb_result *result, idx_t col, idx_t row) {
 
 int64_t duckdb_value_int64(duckdb_result *result, idx_t col, idx_t row) {
 	return GetInternalCValue<int64_t>(result, col, row);
+}
+
+duckdb_decimal duckdb_value_decimal(duckdb_result *result, idx_t col, idx_t row) {
+	duckdb_decimal result_value;
+
+	auto result_data = (duckdb::DuckDBResultData *)result->internal_data;
+	result_data->result->types[col].GetDecimalProperties(result_value.width, result_value.scale);
+
+	auto internal_value = GetInternalCValue<hugeint_t>(result, col, row);
+	result_value.value.lower = internal_value.lower;
+	result_value.value.upper = internal_value.upper;
+	return result_value;
 }
 
 duckdb_hugeint duckdb_value_hugeint(duckdb_result *result, idx_t col, idx_t row) {

@@ -233,8 +233,9 @@ struct UUIDConvert {
 struct ListConvert {
 	static py::list ConvertValue(Vector &input, idx_t chunk_offset) {
 		auto val = input.GetValue(chunk_offset);
+		auto &list_children = ListValue::GetChildren(val);
 		py::list list;
-		for (auto &list_elem : val.list_value) {
+		for (auto &list_elem : list_children) {
 			list.append(DuckDBPyResult::GetValueToPython(list_elem, ListType::GetChildType(input.GetType())));
 		}
 		return list;
@@ -246,12 +247,13 @@ struct StructMapConvert {
 		py::dict py_struct;
 		auto val = input.GetValue(chunk_offset);
 		auto &child_types = StructType::GetChildTypes(input.GetType());
+		auto &struct_children = StructValue::GetChildren(val);
 
-		for (idx_t i = 0; i < val.struct_value.size(); i++) {
+		for (idx_t i = 0; i < struct_children.size(); i++) {
 			auto &child_entry = child_types[i];
 			auto &child_name = child_entry.first;
 			auto &child_type = child_entry.second;
-			py_struct[child_name.c_str()] = DuckDBPyResult::GetValueToPython(val.struct_value[i], child_type);
+			py_struct[child_name.c_str()] = DuckDBPyResult::GetValueToPython(struct_children[i], child_type);
 		}
 		return py_struct;
 	}
@@ -346,16 +348,15 @@ static bool ConvertNested(idx_t target_offset, data_ptr_t target_data, bool *tar
 			if (!idata.validity.RowIsValidUnsafe(src_idx)) {
 				target_mask[offset] = true;
 			} else {
-				out_ptr[offset] = CONVERT::ConvertValue(input, src_idx);
+				out_ptr[offset] = CONVERT::ConvertValue(input, i);
 				target_mask[offset] = false;
 			}
 		}
 		return true;
 	} else {
 		for (idx_t i = 0; i < count; i++) {
-			idx_t src_idx = idata.sel->get_index(i);
 			idx_t offset = target_offset + i;
-			out_ptr[offset] = CONVERT::ConvertValue(input, src_idx);
+			out_ptr[offset] = CONVERT::ConvertValue(input, i);
 			target_mask[offset] = false;
 		}
 		return false;
@@ -481,6 +482,7 @@ RawArrayWrapper::RawArrayWrapper(const LogicalType &type) : data(nullptr), type(
 	case LogicalTypeId::TIME:
 	case LogicalTypeId::TIME_TZ:
 	case LogicalTypeId::VARCHAR:
+	case LogicalTypeId::JSON:
 	case LogicalTypeId::BLOB:
 	case LogicalTypeId::ENUM:
 	case LogicalTypeId::LIST:
@@ -546,6 +548,7 @@ void RawArrayWrapper::Initialize(idx_t capacity) {
 	case LogicalTypeId::TIME:
 	case LogicalTypeId::TIME_TZ:
 	case LogicalTypeId::VARCHAR:
+	case LogicalTypeId::JSON:
 	case LogicalTypeId::BLOB:
 	case LogicalTypeId::LIST:
 	case LogicalTypeId::MAP:
@@ -687,6 +690,7 @@ void ArrayWrapper::Append(idx_t current_offset, Vector &input, idx_t count) {
 		may_have_null = ConvertColumn<interval_t, int64_t, duckdb_py_convert::IntervalConvert>(current_offset, dataptr,
 		                                                                                       maskptr, idata, count);
 		break;
+	case LogicalTypeId::JSON:
 	case LogicalTypeId::VARCHAR:
 		may_have_null = ConvertColumn<string_t, PyObject *, duckdb_py_convert::StringConvert>(current_offset, dataptr,
 		                                                                                      maskptr, idata, count);

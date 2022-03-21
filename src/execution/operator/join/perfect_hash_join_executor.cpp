@@ -94,7 +94,7 @@ bool PerfectHashJoinExecutor::FillSelectionVectorSwitchBuild(Vector &source, Sel
 template <typename T>
 bool PerfectHashJoinExecutor::TemplatedFillSelectionVectorBuild(Vector &source, SelectionVector &sel_vec,
                                                                 SelectionVector &seq_sel_vec, idx_t count) {
-	if (perfect_join_statistics.build_min.is_null || perfect_join_statistics.build_max.is_null) {
+	if (perfect_join_statistics.build_min.IsNull() || perfect_join_statistics.build_max.IsNull()) {
 		return false;
 	}
 	auto min_value = perfect_join_statistics.build_min.GetValueUnsafe<T>();
@@ -153,6 +153,7 @@ OperatorResultType PerfectHashJoinExecutor::ProbePerfectHashTable(ExecutionConte
 	idx_t probe_sel_count = 0;
 
 	// fetch the join keys from the chunk
+	state.join_keys.Reset();
 	state.probe_executor.Execute(input, state.join_keys);
 	// select the keys that are in the min-max range
 	auto &keys_vec = state.join_keys.data[0];

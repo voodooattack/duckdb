@@ -32,6 +32,9 @@ extern "C" WINBASEAPI BOOL WINAPI GetPhysicallyInstalledSystemMemory(PULONGLONG)
 
 namespace duckdb {
 
+FileSystem::~FileSystem() {
+}
+
 FileSystem &FileSystem::GetFileSystem(ClientContext &context) {
 	return *context.db->config.file_system;
 }
@@ -194,7 +197,7 @@ void FileSystem::RemoveDirectory(const string &directory) {
 	throw NotImplementedException("%s: RemoveDirectory is not implemented!", GetName());
 }
 
-bool FileSystem::ListFiles(const string &directory, const std::function<void(string, bool)> &callback) {
+bool FileSystem::ListFiles(const string &directory, const std::function<void(const string &, bool)> &callback) {
 	throw NotImplementedException("%s: ListFiles is not implemented!", GetName());
 }
 
@@ -206,6 +209,10 @@ bool FileSystem::FileExists(const string &filename) {
 	throw NotImplementedException("%s: FileExists is not implemented!", GetName());
 }
 
+bool FileSystem::IsPipe(const string &filename) {
+	throw NotImplementedException("%s: IsPipe is not implemented!", GetName());
+}
+
 void FileSystem::RemoveFile(const string &filename) {
 	throw NotImplementedException("%s: RemoveFile is not implemented!", GetName());
 }
@@ -214,8 +221,12 @@ void FileSystem::FileSync(FileHandle &handle) {
 	throw NotImplementedException("%s: FileSync is not implemented!", GetName());
 }
 
-vector<string> FileSystem::Glob(const string &path) {
+vector<string> FileSystem::Glob(const string &path, FileOpener *opener) {
 	throw NotImplementedException("%s: Glob is not implemented!", GetName());
+}
+
+vector<string> FileSystem::Glob(const string &path, ClientContext &context) {
+	return Glob(path, GetFileOpener(context));
 }
 
 void FileSystem::RegisterSubSystem(unique_ptr<FileSystem> sub_fs) {
@@ -254,6 +265,12 @@ bool FileSystem::OnDiskFile(FileHandle &handle) {
 	throw NotImplementedException("%s: OnDiskFile is not implemented!", GetName());
 }
 // LCOV_EXCL_STOP
+
+FileHandle::FileHandle(FileSystem &file_system, string path_p) : file_system(file_system), path(move(path_p)) {
+}
+
+FileHandle::~FileHandle() {
+}
 
 int64_t FileHandle::Read(void *buffer, idx_t nr_bytes) {
 	return file_system.Read(*this, buffer, nr_bytes);
