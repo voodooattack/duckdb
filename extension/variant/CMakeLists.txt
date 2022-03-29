@@ -6,9 +6,7 @@ set(CMAKE_CXX_STANDARD 17)
 
 include_directories(include)
 
-set(VARIANT_EXTENSION_FILES
-    variant-extension.cpp
-    variant_value.cpp)
+set(VARIANT_EXTENSION_FILES variant-extension.cpp variant_value.cpp)
 
 add_library(variant_extension STATIC ${VARIANT_EXTENSION_FILES})
 

@@ -23,6 +23,8 @@ vector<Value> &struct_value(const Value &v) {
 	return const_cast<vector<Value> &>(StructValue::GetChildren(v));
 }
 
+// clang-format off
+
 TEST_CASE("Test variant", "[variant]") {
 	DuckDB db(nullptr);
 	db.LoadExtension<VariantExtension>();
@@ -189,3 +191,5 @@ TEST_CASE("Test variant", "[variant]") {
 	GENV(Value::MAP(Value::LIST({"key1", "key2"}), Value::LIST({1, 2})));
 #endif
 }
+
+// clang-format on

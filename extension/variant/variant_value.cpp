@@ -19,11 +19,11 @@ static Value BufferToBlob(LogicalTypeId type_id, const void *data, idx_t size) {
 	return result;
 }
 
-#define FIXED_VARIANT(TYPE, TYPE_ID)                         \
-	template <>                                              \
-	Value DUCKDB_API Variant(TYPE value) {                   \
-		return BufferToBlob(TYPE_ID, &value, sizeof(value)); \
-	}                                                        \
+#define FIXED_VARIANT(TYPE, TYPE_ID)                                                                                   \
+	template <>                                                                                                        \
+	Value DUCKDB_API Variant(TYPE value) {                                                                             \
+		return BufferToBlob(TYPE_ID, &value, sizeof(value));                                                           \
+	}
 
 FIXED_VARIANT(bool, LogicalTypeId::BOOLEAN)
 FIXED_VARIANT(int8_t, LogicalTypeId::TINYINT)
@@ -84,29 +84,29 @@ static const char *GetBufferDumbWay(const Value &value) {
 	switch (value.type().InternalType()) {
 	case PhysicalType::BOOL:
 	case PhysicalType::INT8:
-		return (const char*)&v.GetReferenceUnsafe<int8_t>();
+		return (const char *)&v.GetReferenceUnsafe<int8_t>();
 	case PhysicalType::UINT8:
-		return (const char*)&v.GetReferenceUnsafe<uint8_t>();
+		return (const char *)&v.GetReferenceUnsafe<uint8_t>();
 	case PhysicalType::INT16:
-		return (const char*)&v.GetReferenceUnsafe<int16_t>();
+		return (const char *)&v.GetReferenceUnsafe<int16_t>();
 	case PhysicalType::UINT16:
-		return (const char*)&v.GetReferenceUnsafe<uint16_t>();
+		return (const char *)&v.GetReferenceUnsafe<uint16_t>();
 	case PhysicalType::INT32:
-		return (const char*)&v.GetReferenceUnsafe<int32_t>();
+		return (const char *)&v.GetReferenceUnsafe<int32_t>();
 	case PhysicalType::UINT32:
-		return (const char*)&v.GetReferenceUnsafe<uint32_t>();
+		return (const char *)&v.GetReferenceUnsafe<uint32_t>();
 	case PhysicalType::INT64:
-		return (const char*)&v.GetReferenceUnsafe<int64_t>();
+		return (const char *)&v.GetReferenceUnsafe<int64_t>();
 	case PhysicalType::UINT64:
-		return (const char*)&v.GetReferenceUnsafe<uint64_t>();
+		return (const char *)&v.GetReferenceUnsafe<uint64_t>();
 	case PhysicalType::INT128:
-		return (const char*)&v.GetReferenceUnsafe<hugeint_t>();
+		return (const char *)&v.GetReferenceUnsafe<hugeint_t>();
 	case PhysicalType::FLOAT:
-		return (const char*)&v.GetReferenceUnsafe<float>();
+		return (const char *)&v.GetReferenceUnsafe<float>();
 	case PhysicalType::DOUBLE:
-		return (const char*)&v.GetReferenceUnsafe<double>();
+		return (const char *)&v.GetReferenceUnsafe<double>();
 	case PhysicalType::INTERVAL:
-		return (const char*)&v.GetReferenceUnsafe<interval_t>();
+		return (const char *)&v.GetReferenceUnsafe<interval_t>();
 	default:
 		throw InvalidTypeException(value.type(), "Invalid physical type to encode as variant");
 	}
