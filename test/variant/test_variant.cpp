@@ -1,5 +1,4 @@
 //#define GEN_VARIANT
-#define DUCKDB_API_VERSION 1
 #include <catch.hpp>
 #include <test_helpers.hpp>
 
@@ -19,6 +18,10 @@ using namespace duckdb;
 #define GEN(v)  of << "blob = Value::BLOB(R\"'(" << v << ")'\");\nREQUIRE(" #v " == blob);\n"
 #define GENV(v) of << "blob = Value::BLOB(R\"'(" << Variant(v) << ")'\");\nREQUIRE(Variant(" #v ") == blob);\n"
 #endif
+
+vector<Value> &struct_value(const Value &v) {
+	return const_cast<vector<Value> &>(StructValue::GetChildren(v));
+}
 
 TEST_CASE("Test variant", "[variant]") {
 	DuckDB db(nullptr);
@@ -46,10 +49,9 @@ TEST_CASE("Test variant", "[variant]") {
 		{"bool or string", Value(LogicalTypeId::ANY)},
 		{"nested", Value::STRUCT({{"child1", 123}, {"child2", "a string"}})}
 	});
-	st.struct_value[6] = Value::BOOLEAN(true);
-	Value st2 = Value(st.type());
-	st2.is_null = false;
-	st2.struct_value = {
+	struct_value(st)[6] = Value::BOOLEAN(true);
+	Value st2 = st;
+	struct_value(st2) = {
 		Value::BOOLEAN(false),
 		"goodbye",
 		Value::LIST(LogicalType::TINYINT, {}),
@@ -59,12 +61,12 @@ TEST_CASE("Test variant", "[variant]") {
 		"not boolean",
 		Value::STRUCT({{"child1", 456}, {"child2", "also a string"}})
 	};
-	Value st_null = Value(st.type());
-	st_null.is_null = false;
-	st_null.struct_value.resize(st.struct_value.size());
+	Value st_null = st;
+	struct_value(st_null).clear();
+	struct_value(st_null).resize(struct_value(st).size());
 
 	Value any_list = Value::EMPTYLIST(LogicalTypeId::ANY);
-	any_list.list_value = {1, "a string", nullptr, Value::DECIMAL(314159265LL, 9, 8), st, Value::STRUCT({}),
+	const_cast<vector<Value> &>(ListValue::GetChildren(any_list)) = {1, "a string", nullptr, Value::DECIMAL(INT64_C(314159265), 9, 8), st, Value::STRUCT({}),
 		Value::LIST(LogicalType::SMALLINT, {1, 2, 3, nullptr}),
 		Value::LIST(LogicalType::VARCHAR, {"a", "bbb", "cdefg", nullptr}),
 	};
@@ -73,7 +75,7 @@ TEST_CASE("Test variant", "[variant]") {
 
 #ifndef GEN_VARIANT
 
-	REQUIRE(Variant(Value()).is_null);
+	REQUIRE(Variant(Value()).IsNull());
 #include "test_variant.inc"
 
 #else
@@ -124,9 +126,9 @@ TEST_CASE("Test variant", "[variant]") {
 	GENV(Value(""));
 	GENV(Value("a string"));
 	GENV(Value::BLOB((const uint8_t*)"a\0blob", 6));
-	GENV(Value::DECIMAL(3141LL, 4, 3));
-	GENV(Value::DECIMAL(314159265LL, 9, 8));
-	GENV(Value::DECIMAL(314159265358979323LL, 18, 17));
+	GENV(Value::DECIMAL(INT64_C(3141), 4, 3));
+	GENV(Value::DECIMAL(INT64_C(314159265), 9, 8));
+	GENV(Value::DECIMAL(INT64_C(314159265358979323), 18, 17));
 	GENV(Value::DECIMAL(huge_val, 32, 31));
 	GENV(Value::ENUM(2, tp_enum));
 
@@ -139,7 +141,7 @@ TEST_CASE("Test variant", "[variant]") {
 	GENV(Value::LIST(LogicalType::SMALLINT, {-32768, nullptr, 32767}));
 	GENV(Value::LIST(LogicalType::USMALLINT, {65535}));
 	GENV(Value::LIST(LogicalType::INTEGER, {std::numeric_limits<int32_t>::max(), -1, 2, 3, 4, 5, 6, 7, 8, nullptr, std::numeric_limits<int32_t>::min()}));
-	GENV(Value::LIST(LogicalType::UINTEGER, {0x80000001LL}));
+	GENV(Value::LIST(LogicalType::UINTEGER, {INT64_C(0x80000001)}));
 	GENV(Value::LIST(LogicalType::BIGINT, {std::numeric_limits<int64_t>::max(), nullptr, std::numeric_limits<int64_t>::min()}));
 	GENV(Value::LIST(LogicalType::UBIGINT, {Value::UBIGINT(100), Value::UBIGINT(200)}));
 	GENV(Value::LIST(LogicalType::HUGEINT, {Value::HUGEINT(huge_val), Value::HUGEINT(huge_val / 2), nullptr}));
@@ -156,10 +158,10 @@ TEST_CASE("Test variant", "[variant]") {
 	GENV(Value::LIST(LogicalType::INTERVAL, {Value::INTERVAL(13, 18, 10000000000), nullptr, Value::INTERVAL(130, 1, 10000000)}));
 	GENV(Value::LIST(LogicalType::HASH, {Value::HASH(Hash("Hash me")), nullptr, Value::HASH(Hash("Hash me too"))}));
 	GENV(Value::LIST(LogicalType::UUID, {Value::UUID("6b6542ea-863f-4b10-b5ff-ab9ed50f4291"), nullptr, Value::UUID("33b66900-6d7e-11ec-90d6-0242ac120003")}));
-	GENV(Value::LIST(LogicalType::DECIMAL(4, 3), {Value::DECIMAL(3141LL, 4, 3), nullptr, Value::DECIMAL(65535LL, 4, 3)}));
-	GENV(Value::LIST(LogicalType::DECIMAL(9, 8), {Value::DECIMAL(314159265LL, 9, 8), nullptr, Value::DECIMAL(1LL, 9, 8)}));
-	GENV(Value::LIST(LogicalType::DECIMAL(18, 17), {Value::DECIMAL(314159265358979323LL, 18, 17), nullptr, Value::DECIMAL(1LL, 18, 17)}));
-	GENV(Value::LIST(LogicalType::DECIMAL(32, 31), {Value::DECIMAL(huge_val, 32, 31), nullptr, Value::DECIMAL(1LL, 32, 31)}));
+	GENV(Value::LIST(LogicalType::DECIMAL(4, 3), {Value::DECIMAL(INT64_C(3141), 4, 3), nullptr, Value::DECIMAL(INT64_C(65535), 4, 3)}));
+	GENV(Value::LIST(LogicalType::DECIMAL(9, 8), {Value::DECIMAL(INT64_C(314159265), 9, 8), nullptr, Value::DECIMAL(INT64_C(1), 9, 8)}));
+	GENV(Value::LIST(LogicalType::DECIMAL(18, 17), {Value::DECIMAL(INT64_C(314159265358979323), 18, 17), nullptr, Value::DECIMAL(INT64_C(1), 18, 17)}));
+	GENV(Value::LIST(LogicalType::DECIMAL(32, 31), {Value::DECIMAL(huge_val, 32, 31), nullptr, Value::DECIMAL(INT64_C(1), 32, 31)}));
 	GENV(Value::EMPTYLIST(LogicalType::VARCHAR));
 	GENV(Value::LIST(LogicalType::VARCHAR, {"", nullptr, "a string"}));
 	GENV(Value::LIST(LogicalType::BLOB, {Value::BLOB((const uint8_t*)"a\0blob", 6), nullptr, "", "a blob"}));

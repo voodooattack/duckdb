@@ -1,4 +1,3 @@
-#define DUCKDB_API_VERSION 1
 #include "duckdb.hpp"
 
 #include "variant_value.hpp"
@@ -7,12 +6,16 @@ namespace duckdb {
 
 constexpr idx_t list_index_size = sizeof(variant_index_type);
 
+static void store_index(variant_index_type data, char *buffer, idx_t idx = 0) {
+	memcpy(buffer + idx * list_index_size, &data, sizeof(data));
+}
+
 static Value BufferToBlob(LogicalTypeId type_id, const void *data, idx_t size) {
-	Value result(LogicalType::BLOB);
-	result.is_null = false;
-	result.str_value.reserve(size + 1);
-	result.str_value.push_back(static_cast<uint8_t>(type_id));
-	result.str_value.append((const char *)data, size);
+	Value result = Value::BLOB(nullptr, 0);
+	string &str_value = const_cast<string &>(StringValue::Get(result));
+	str_value.reserve(size + 1);
+	str_value.push_back(static_cast<uint8_t>(type_id));
+	str_value.append((const char *)data, size);
 	return result;
 }
 
@@ -64,7 +67,7 @@ static void TypeToBlob(const LogicalType &type, string &result) {
 		idx_t offsets = result.size();
 		result.resize(offsets + MaxValue<idx_t>(list.size(), 1) * list_index_size);
 		for (idx_t i = 0; i < list.size(); ++i) {
-			((variant_index_type *)&result[offsets])[i] = variant_index_type(result.size() - offsets);
+			store_index(result.size() - offsets, &result[offsets], i);
 			auto &v = list[i];
 			variant_index_type size = (variant_index_type)v.first.size();
 			result.append((const char *)&size, list_index_size);
@@ -73,6 +76,39 @@ static void TypeToBlob(const LogicalType &type, string &result) {
 		}
 		break;
 	}
+	}
+}
+
+static const char *GetBufferDumbWay(const Value &value) {
+	Value &v = const_cast<Value &>(value);
+	switch (value.type().InternalType()) {
+	case PhysicalType::BOOL:
+	case PhysicalType::INT8:
+		return (const char*)&v.GetReferenceUnsafe<int8_t>();
+	case PhysicalType::UINT8:
+		return (const char*)&v.GetReferenceUnsafe<uint8_t>();
+	case PhysicalType::INT16:
+		return (const char*)&v.GetReferenceUnsafe<int16_t>();
+	case PhysicalType::UINT16:
+		return (const char*)&v.GetReferenceUnsafe<uint16_t>();
+	case PhysicalType::INT32:
+		return (const char*)&v.GetReferenceUnsafe<int32_t>();
+	case PhysicalType::UINT32:
+		return (const char*)&v.GetReferenceUnsafe<uint32_t>();
+	case PhysicalType::INT64:
+		return (const char*)&v.GetReferenceUnsafe<int64_t>();
+	case PhysicalType::UINT64:
+		return (const char*)&v.GetReferenceUnsafe<uint64_t>();
+	case PhysicalType::INT128:
+		return (const char*)&v.GetReferenceUnsafe<hugeint_t>();
+	case PhysicalType::FLOAT:
+		return (const char*)&v.GetReferenceUnsafe<float>();
+	case PhysicalType::DOUBLE:
+		return (const char*)&v.GetReferenceUnsafe<double>();
+	case PhysicalType::INTERVAL:
+		return (const char*)&v.GetReferenceUnsafe<interval_t>();
+	default:
+		throw InvalidTypeException(value.type(), "Invalid physical type to encode as variant");
 	}
 }
 
@@ -109,11 +145,11 @@ static void ValueToBlob(const Value &value, string &result) {
 	switch (type.InternalType()) {
 
 	case PhysicalType::VARCHAR:
-		result += value.str_value;
+		result += StringValue::Get(value);
 		return;
 
 	case PhysicalType::LIST: {
-		const auto &list = value.list_value;
+		auto &list = ListValue::GetChildren(value);
 		variant_index_type list_size = (variant_index_type)list.size();
 		if (list_size == 0) {
 			return;
@@ -127,12 +163,12 @@ static void ValueToBlob(const Value &value, string &result) {
 			result.reserve(result.size() + list.size() * child_size);
 			for (idx_t i = 0; i < list.size(); ++i) {
 				auto &v = list[i];
-				if (v.is_null) {
+				if (v.IsNull()) {
 					result[bitmap + i / 8] |= 1 << (i % 8);
 					result.append(child_size, '\0');
 				} else {
 					D_ASSERT(v.type() == child_type);
-					result.append((const char *)&v.value_, child_size);
+					result.append(GetBufferDumbWay(v), child_size);
 				}
 			}
 			return;
@@ -140,11 +176,11 @@ static void ValueToBlob(const Value &value, string &result) {
 		idx_t offsets = result.size();
 		idx_t offsets_size = (list.size() + 1) * list_index_size;
 		result.resize(offsets + offsets_size);
-		*(variant_index_type *)&result[offsets] = (variant_index_type)offsets_size;
+		store_index(offsets_size, &result[offsets]);
 		bool is_any = child_type.id() == LogicalTypeId::ANY;
 		for (idx_t i = 0; i < list.size(); ++i) {
 			auto &v = list[i];
-			if (v.is_null) {
+			if (v.IsNull()) {
 				result[bitmap + i / 8] |= 1 << i % 8;
 			} else {
 				if (is_any) {
@@ -154,13 +190,13 @@ static void ValueToBlob(const Value &value, string &result) {
 				}
 				ValueToBlob(v, result);
 			}
-			((variant_index_type *)&result[offsets])[i + 1] = variant_index_type(result.size() - offsets);
+			store_index(result.size() - offsets, &result[offsets], i + 1);
 		}
 		return;
 	}
 
 	case PhysicalType::STRUCT: {
-		const auto &list = value.struct_value;
+		auto &list = StructValue::GetChildren(value);
 		if (list.empty()) {
 			return;
 		}
@@ -169,11 +205,11 @@ static void ValueToBlob(const Value &value, string &result) {
 		idx_t offsets = result.size();
 		idx_t offsets_size = (list.size() + 1) * list_index_size;
 		result.resize(offsets + offsets_size);
-		*(variant_index_type *)&result[offsets] = (variant_index_type)offsets_size;
+		store_index(offsets_size, &result[offsets]);
 		auto &child_types = StructType::GetChildTypes(type);
 		for (idx_t i = 0; i < list.size(); ++i) {
 			auto &v = list[i];
-			if (v.is_null) {
+			if (v.IsNull()) {
 				result[bitmap + i / 8] |= 1 << i % 8;
 			} else {
 				if (child_types[i].second.id() == LogicalTypeId::ANY) {
@@ -183,7 +219,7 @@ static void ValueToBlob(const Value &value, string &result) {
 				}
 				ValueToBlob(v, result);
 			}
-			((variant_index_type *)&result[offsets])[i + 1] = variant_index_type(result.size() - offsets);
+			store_index(result.size() - offsets, &result[offsets], i + 1);
 		}
 		return;
 	}
@@ -198,22 +234,28 @@ static void ValueToBlob(const Value &value, string &result) {
 	if (size == 0) {
 		throw InvalidTypeException(type, "Cannot encode type as variant");
 	}
-	result.append((const char *)&value.value_, size);
+	result.append(GetBufferDumbWay(value), size);
 }
 
 Value DUCKDB_API Variant(const Value &value) {
-	Value result(LogicalType::BLOB);
-	if (value.is_null) {
-		return result;
+	if (value.IsNull()) {
+		return Value(LogicalType::BLOB);
 	}
-	result.is_null = false;
-	TypeToBlob(value.type(), result.str_value);
-	ValueToBlob(value, result.str_value);
+	Value result = Value::BLOB(nullptr, 0);
+	string &str_value = const_cast<string &>(StringValue::Get(result));
+	TypeToBlob(value.type(), str_value);
+	ValueToBlob(value, str_value);
 	return result;
 }
 
 [[noreturn]] static void BadVariant() {
 	throw InvalidInputException("Invalid Variant value");
+}
+
+static variant_index_type load_index(const char *buffer, idx_t idx = 0) {
+	variant_index_type data;
+	memcpy(&data, buffer + idx * list_index_size, sizeof(data));
+	return data;
 }
 
 static LogicalType BlobToType(const char *&begin, const char *end) {
@@ -238,20 +280,19 @@ static LogicalType BlobToType(const char *&begin, const char *end) {
 		if (begin + list_index_size > end) {
 			BadVariant();
 		}
-		const variant_index_type *offsets = (const variant_index_type *)begin;
 		const char *start = begin;
-		idx_t list_size = *offsets / list_index_size;
+		idx_t list_size = load_index(start) / list_index_size;
 		child_list_t<LogicalType> child_types;
 		if (list_size == 0) {
 			begin += 4;
 		} else {
 			child_types.reserve(list_size);
 			for (idx_t i = 0; i < list_size; ++i) {
-				begin = start + offsets[i];
+				begin = start + load_index(start, i);
 				if (begin + list_index_size > end) {
 					BadVariant();
 				}
-				variant_index_type key_size = *(const variant_index_type *)begin;
+				variant_index_type key_size = load_index(begin);
 				begin += list_index_size;
 				if (begin + key_size > end) {
 					BadVariant();
@@ -268,29 +309,78 @@ static LogicalType BlobToType(const char *&begin, const char *end) {
 	return type_id;
 }
 
-static void BlobToValue(const char *begin, const char *end, Value &result) {
-	auto &type = result.type();
-	result.is_null = false;
+static Value BlobToFixed(const LogicalType &type, const char *begin) {
+	Value v = Value::INTEGER(0);
+	const_cast<LogicalType &>(v.type()) = type;
+	switch (type.InternalType()) {
+	case PhysicalType::BOOL:
+	case PhysicalType::INT8:
+		memcpy(&v.GetReferenceUnsafe<int8_t>(), begin, sizeof(int8_t));
+		break;
+	case PhysicalType::UINT8:
+		memcpy(&v.GetReferenceUnsafe<uint8_t>(), begin, sizeof(uint8_t));
+		break;
+	case PhysicalType::INT16:
+		memcpy(&v.GetReferenceUnsafe<int16_t>(), begin, sizeof(int16_t));
+		break;
+	case PhysicalType::UINT16:
+		memcpy(&v.GetReferenceUnsafe<uint16_t>(), begin, sizeof(uint16_t));
+		break;
+	case PhysicalType::INT32:
+		memcpy(&v.GetReferenceUnsafe<int32_t>(), begin, sizeof(int32_t));
+		break;
+	case PhysicalType::UINT32:
+		memcpy(&v.GetReferenceUnsafe<uint32_t>(), begin, sizeof(uint32_t));
+		break;
+	case PhysicalType::INT64:
+		memcpy(&v.GetReferenceUnsafe<int64_t>(), begin, sizeof(int64_t));
+		break;
+	case PhysicalType::UINT64:
+		memcpy(&v.GetReferenceUnsafe<uint64_t>(), begin, sizeof(uint64_t));
+		break;
+	case PhysicalType::INT128:
+		memcpy(&v.GetReferenceUnsafe<hugeint_t>(), begin, sizeof(hugeint_t));
+		break;
+	case PhysicalType::FLOAT:
+		memcpy(&v.GetReferenceUnsafe<float>(), begin, sizeof(float));
+		break;
+	case PhysicalType::DOUBLE:
+		memcpy(&v.GetReferenceUnsafe<double>(), begin, sizeof(double));
+		break;
+	case PhysicalType::INTERVAL:
+		memcpy(&v.GetReferenceUnsafe<interval_t>(), begin, sizeof(interval_t));
+		break;
+	default:
+		BadVariant();
+	}
+	return v;
+}
+
+static Value BlobToValue(const char *begin, const char *end, const LogicalType &type) {
 	D_ASSERT(begin <= end);
 	idx_t blob_size = end - begin;
 
-	switch (type.InternalType()) {
+	switch (type.id()) {
 
-	case PhysicalType::VARCHAR:
-		result.str_value = string(begin, blob_size);
-		return;
+	case LogicalTypeId::VARCHAR:
+		return Value(string(begin, blob_size));
+	case LogicalTypeId::JSON:
+		return Value::JSON(string(begin, blob_size));
+	case LogicalTypeId::BLOB:
+		return Value::BLOB((const uint8_t *)begin, blob_size);
 
-	case PhysicalType::LIST: {
+	case LogicalTypeId::LIST: {
+		auto &child_type = ListType::GetChildType(type);
+		Value result = Value::EMPTYLIST(child_type);
 		if (blob_size == 0) {
-			return;
+			return result;
 		}
 		if (blob_size < list_index_size) {
 			BadVariant();
 		}
-		idx_t list_size = *(const variant_index_type *)begin;
-		auto &list = result.list_value;
+		idx_t list_size = load_index(begin);
+		auto &list = const_cast<vector<Value> &>(ListValue::GetChildren(result));
 		list.reserve(list_size);
-		auto &child_type = ListType::GetChildType(type);
 		idx_t child_size = TypeSize(child_type);
 		const char *bitmap = begin += list_index_size;
 		begin += (list_size + 7) / 8;
@@ -299,17 +389,15 @@ static void BlobToValue(const char *begin, const char *end, Value &result) {
 				BadVariant();
 			}
 			for (idx_t i = 0; i < list_size; ++i) {
-				list.emplace_back(child_type);
 				if (!(bitmap[i / 8] & (1 << i % 8))) {
-					auto &v = list.back();
-					v.is_null = false;
-					memmove(&v.value_, begin, child_size);
+					list.push_back(BlobToFixed(child_type, begin));
+				} else {
+					list.emplace_back(child_type);
 				}
 				begin += child_size;
 			}
-			return;
+			return result;
 		}
-		const variant_index_type *offsets = (const variant_index_type *)begin;
 		const char *start = begin;
 		if (start + (list_size + 1) * list_index_size > end) {
 			BadVariant();
@@ -319,33 +407,35 @@ static void BlobToValue(const char *begin, const char *end, Value &result) {
 			if (bitmap[i / 8] & (1 << i % 8)) {
 				list.push_back(is_any ? Value() : Value(child_type));
 			} else {
-				begin = start + offsets[i];
-				const char *v_end = start + offsets[i + 1];
+				begin = start + load_index(start, i);
+				const char *v_end = start + load_index(start, i + 1);
 				if (v_end > end || begin > end) {
 					BadVariant();
 				}
 				if (is_any) {
-					list.emplace_back(BlobToType(begin, v_end));
+					LogicalType elem_type = BlobToType(begin, v_end);
+					list.push_back(BlobToValue(begin, v_end, elem_type));
 				} else {
-					list.emplace_back(child_type);
+					list.push_back(BlobToValue(begin, v_end, child_type));
 				}
-				BlobToValue(begin, v_end, list.back());
 			}
 		}
-		return;
+		return result;
 	}
 
-	case PhysicalType::STRUCT: {
+	case LogicalTypeId::MAP:
+	case LogicalTypeId::STRUCT: {
+		Value result = Value::INTEGER(0);
+		const_cast<LogicalType &>(result.type()) = type;
 		if (blob_size == 0) {
-			return;
+			return result;
 		}
 		auto &child_types = StructType::GetChildTypes(type);
 		idx_t list_size = child_types.size();
-		auto &list = result.struct_value;
+		auto &list = const_cast<vector<Value> &>(StructValue::GetChildren(result));
 		list.reserve(list_size);
 		const char *bitmap = begin;
 		begin += (list_size + 7) / 8;
-		const variant_index_type *offsets = (const variant_index_type *)begin;
 		const char *start = begin;
 		if (start + (list_size + 1) * list_index_size > end) {
 			BadVariant();
@@ -355,43 +445,42 @@ static void BlobToValue(const char *begin, const char *end, Value &result) {
 			if (bitmap[i / 8] & (1 << i % 8)) {
 				list.push_back(child_type.id() == LogicalTypeId::ANY ? Value() : Value(child_type));
 			} else {
-				begin = start + offsets[i];
-				const char *v_end = start + offsets[i + 1];
+				begin = start + load_index(start, i);
+				const char *v_end = start + load_index(start, i + 1);
 				if (v_end > end || begin > end) {
 					BadVariant();
 				}
 				if (child_type.id() == LogicalTypeId::ANY) {
-					list.emplace_back(BlobToType(begin, v_end));
+					LogicalType elem_type = BlobToType(begin, v_end);
+					list.push_back(BlobToValue(begin, v_end, elem_type));
 				} else {
-					list.emplace_back(child_type);
+					list.push_back(BlobToValue(begin, v_end, child_type));
 				}
-				BlobToValue(begin, v_end, list.back());
 			}
 		}
-		return;
+		return result;
 	}
 
 	default:
 		if (blob_size != TypeSize(type) || blob_size == 0) {
 			BadVariant();
 		}
-		memcpy(&result.value_, begin, blob_size);
-		return;
+		return BlobToFixed(type, begin);
 	}
 }
 
 Value DUCKDB_API FromVariant(const Value &value) {
-	if (value.is_null) {
+	if (value.IsNull()) {
 		return Value();
 	}
 	if (value.type().id() != LogicalTypeId::BLOB) {
 		throw InvalidTypeException(value.type(), "Variant requires BLOB type");
 	}
-	const char *begin = value.str_value.data();
-	const char *end = begin + value.str_value.size();
-	Value result = Value(BlobToType(begin, end));
-	BlobToValue(begin, end, result);
-	return result;
+	const string &str_value = StringValue::Get(value);
+	const char *begin = str_value.data();
+	const char *end = begin + str_value.size();
+	LogicalType type = BlobToType(begin, end);
+	return BlobToValue(begin, end, type);
 }
 
 } // namespace duckdb

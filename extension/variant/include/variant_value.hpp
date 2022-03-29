@@ -7,8 +7,11 @@ namespace duckdb {
 typedef uint32_t variant_index_type;
 
 template <typename T>
+struct always_false : std::false_type {};
+
+template <typename T>
 Value Variant(T value) {
-	static_assert(false, "Cannot convert type to Variant");
+	static_assert(always_false<T>::value, "Cannot convert type to Variant");
 }
 
 template <>

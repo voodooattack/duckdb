@@ -1,4 +1,3 @@
-#define DUCKDB_API_VERSION 1
 #define DUCKDB_EXTENSION_MAIN
 
 #include "duckdb.hpp"
@@ -24,12 +23,20 @@ static void VariantFunction(DataChunk &args, ExpressionState &state, Vector &res
 }
 
 static void FromVariantFunction(DataChunk &args, ExpressionState &state, Vector &result) {
+	bool is_constant = true;
+	for (idx_t i = 1; i < args.ColumnCount(); ++i) {
+		if (args.data[i].GetVectorType() != VectorType::CONSTANT_VECTOR) {
+			is_constant = false;
+			break;
+		}
+	}
+	result.SetVectorType(is_constant ? VectorType::CONSTANT_VECTOR : VectorType::FLAT_VECTOR);
 	auto &type = result.GetType();
 	for (idx_t i_row = 0; i_row < args.size(); ++i_row) {
 		Value val = FromVariant(args.GetValue(1, i_row));
-		Value *vp = &val;
+		const Value *vp = &val;
 		for (idx_t i_idx = 2; i_idx < args.ColumnCount(); ++i_idx) {
-			if (vp->is_null) {
+			if (vp->IsNull()) {
 				goto set_null;
 			}
 			switch (vp->type().id()) {
@@ -38,7 +45,7 @@ static void FromVariantFunction(DataChunk &args, ExpressionState &state, Vector 
 					goto set_null;
 				}
 				Value val_idx = args.GetValue(i_idx, i_row);
-				if (val_idx.is_null) {
+				if (val_idx.IsNull()) {
 					goto set_null;
 				}
 				auto &child_types = StructType::GetChildTypes(vp->type());
@@ -46,8 +53,8 @@ static void FromVariantFunction(DataChunk &args, ExpressionState &state, Vector 
 					if (i >= child_types.size()) {
 						goto set_null;
 					}
-					if (child_types[i].first == val_idx.str_value) {
-						vp = &vp->struct_value[i];
+					if (child_types[i].first == StringValue::Get(val_idx)) {
+						vp = &StructValue::GetChildren(*vp)[i];
 						break;
 					}
 				}
@@ -58,33 +65,37 @@ static void FromVariantFunction(DataChunk &args, ExpressionState &state, Vector 
 					goto set_null;
 				}
 				Value val_idx = args.GetValue(i_idx, i_row);
-				if (val_idx.is_null) {
+				if (val_idx.IsNull()) {
 					goto set_null;
 				}
 				variant_index_type idx = val_idx.GetValue<variant_index_type>();
-				if (idx >= vp->list_value.size()) {
+				if (idx >= ListValue::GetChildren(*vp).size()) {
 					goto set_null;
 				}
-				vp = &vp->list_value[idx];
+				vp = &ListValue::GetChildren(*vp)[idx];
 				break;
 			}
 			default:
 				goto set_null;
 			}
 		}
-		if (vp->is_null) {
+		if (vp->IsNull()) {
 			goto set_null;
 		}
 		if (vp->type() != type) {
 			auto cost = CastRules::ImplicitCast(vp->type(), type);
-			if (cost < 0 || cost > 120 || !vp->TryCastAs(type)) {
+			if (cost < 0 || cost > 120 || !const_cast<Value *>(vp)->TryCastAs(type)) {
 				goto set_null;
 			}
 		}
 		result.SetValue(i_row, *vp);
 		continue;
 	set_null:
-		FlatVector::SetNull(result, i_row, true);
+		if (is_constant) {
+			ConstantVector::SetNull(result, true);
+		} else {
+			FlatVector::SetNull(result, i_row, true);
+		}
 	}
 }
 
@@ -94,7 +105,7 @@ unique_ptr<FunctionData> FromVariantBind(ClientContext &context, ScalarFunction 
 		throw InvalidInputException("type must be a constant");
 	}
 	Value type_str = ExpressionExecutor::EvaluateScalar(*arguments[0]);
-	if (type_str.is_null || type_str.type().id() != LogicalTypeId::VARCHAR) {
+	if (type_str.IsNull() || type_str.type().id() != LogicalTypeId::VARCHAR) {
 		throw InvalidInputException("invalid type");
 	}
 	for (idx_t i = 2; i < arguments.size(); ++i) {
@@ -103,11 +114,10 @@ unique_ptr<FunctionData> FromVariantBind(ClientContext &context, ScalarFunction 
 			throw InvalidInputException("indices must be of string or integer type");
 		}
 	}
-	LogicalTypeId return_type_id = TransformStringToLogicalTypeId(type_str.str_value);
+	LogicalTypeId return_type_id = TransformStringToLogicalTypeId(StringValue::Get(type_str));
 	if (return_type_id == LogicalTypeId::USER) {
-		bound_function.return_type = TransformStringToLogicalType(type_str.str_value);
-	}
-	else {
+		bound_function.return_type = TransformStringToLogicalType(StringValue::Get(type_str));
+	} else {
 		bound_function.return_type = return_type_id;
 	}
 	return nullptr;
