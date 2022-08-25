@@ -73,6 +73,13 @@
 #include "sqlsmith-extension.hpp"
 #endif
 
+#if defined(BUILD_VARIANT_JSON_EXTENSION) && !defined(DISABLE_BUILTIN_EXTENSIONS)
+#define VARIANT_JSON_STATICALLY_LOADED true
+#include "variant-extension.hpp"
+#else
+#define VARIANT_JSON_STATICALLY_LOADED false
+#endif
+
 namespace duckdb {
 
 //===--------------------------------------------------------------------===//
@@ -89,6 +96,7 @@ static DefaultExtension internal_extensions[] = {
     {"json", "Adds support for JSON operations", JSON_STATICALLY_LOADED},
     {"sqlite_scanner", "Adds support for reading SQLite database files", false},
     {"postgres_scanner", "Adds support for reading from a Postgres database", false},
+    {"variant_json", "Adds support for VARIANT data type", VARIANT_JSON_STATICALLY_LOADED},
     {nullptr, nullptr, false}};
 
 idx_t ExtensionHelper::DefaultExtensionCount() {
@@ -108,7 +116,7 @@ DefaultExtension ExtensionHelper::GetDefaultExtension(idx_t index) {
 //===--------------------------------------------------------------------===//
 void ExtensionHelper::LoadAllExtensions(DuckDB &db) {
 	unordered_set<string> extensions {"parquet",   "icu",        "tpch", "tpcds", "fts",     "httpfs",
-	                                  "substrait", "visualizer", "json", "excel", "sqlsmith"};
+	                                  "substrait", "visualizer", "json", "excel", "sqlsmith", "variant_json"};
 	for (auto &ext : extensions) {
 		LoadExtensionInternal(db, ext, true);
 	}
@@ -211,6 +219,13 @@ ExtensionLoadResult ExtensionHelper::LoadExtensionInternal(DuckDB &db, const std
 		db.LoadExtension<SQLSmithExtension>();
 #else
 		// excel extension required but not build: skip this test
+		return ExtensionLoadResult::NOT_LOADED;
+#endif
+	} else if (extension == "variant_json") {
+#if VARIANT_JSON_STATICALLY_LOADED
+		db.LoadExtension<VariantJsonExtension>();
+#else
+		// variant_json extension required but not build: skip this test
 		return ExtensionLoadResult::NOT_LOADED;
 #endif
 	} else {
