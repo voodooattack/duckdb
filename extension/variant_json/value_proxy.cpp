@@ -83,8 +83,8 @@ string ValueReader::GetDatetime() const {
 	return StringValue::Get(value.CastAs(LogicalTypeId::VARCHAR));
 }
 
-string ValueReader::GetInterval() const {
-	return StringValue::Get(value.CastAs(LogicalTypeId::VARCHAR));
+const interval_t &ValueReader::GetInterval() const {
+	return const_cast<Value &>(value).GetReferenceUnsafe<interval_t>();
 }
 
 ValueReader ValueReader::operator[](idx_t index) const {
@@ -104,7 +104,6 @@ ValueReader::ListIterator ValueReader::begin() const {
 ValueReader::ListIterator ValueReader::end() const {
 	return ListIterator(ListValue::GetChildren(value).cend());
 }
-
 
 void ValueWriter::SetNull() {
 	D_ASSERT(value.IsNull());
@@ -161,8 +160,7 @@ void ValueWriter::SetList() {
 	SetNotNull();
 }
 
-ValueWriter ValueWriter::ListAppend()
-{
+ValueWriter ValueWriter::ListAppend() {
 	D_ASSERT(value.type().id() == LogicalTypeId::LIST);
 	auto &list = const_cast<vector<Value> &>(ListValue::GetChildren(value));
 	auto &child_type = ListType::GetChildType(value.type());
@@ -183,9 +181,7 @@ ValueWriter ValueWriter::operator[](idx_t index) {
 	return ValueWriter(const_cast<Value &>(StructValue::GetChildren(value)[index]));
 }
 
-
-void ValueExecuteUnary(DataChunk &args, Vector &result, value_unary_func func)
-{
+void ValueExecuteUnary(DataChunk &args, Vector &result, value_unary_func func) {
 	result.SetVectorType(args.data[0].GetVectorType() == VectorType::CONSTANT_VECTOR ? VectorType::CONSTANT_VECTOR
 	                                                                                 : VectorType::FLAT_VECTOR);
 	for (idx_t i_row = 0; i_row < args.size(); ++i_row) {
@@ -200,8 +196,7 @@ void ValueExecuteUnary(DataChunk &args, Vector &result, value_unary_func func)
 	}
 }
 
-void ValueExecuteBinary(DataChunk &args, Vector &result, value_binary_func func)
-{
+void ValueExecuteBinary(DataChunk &args, Vector &result, value_binary_func func) {
 	bool is_constant = true;
 	for (idx_t i = 0; i < args.ColumnCount(); ++i) {
 		if (args.data[i].GetVectorType() != VectorType::CONSTANT_VECTOR) {

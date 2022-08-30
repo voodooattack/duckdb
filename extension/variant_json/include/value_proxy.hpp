@@ -8,8 +8,7 @@ namespace duckdb {
 
 class ValueReader {
 public:
-	ValueReader(const Value &value) noexcept
-	    : value(value) {
+	ValueReader(const Value &value) noexcept : value(value) {
 	}
 
 	bool IsNull() const;
@@ -25,7 +24,7 @@ public:
 	string GetTime() const;
 	string GetTimestamp() const;
 	string GetDatetime() const;
-	string GetInterval() const;
+	const interval_t &GetInterval() const;
 	ValueReader operator[](idx_t index) const;
 	size_t ListSize() const;
 
@@ -38,12 +37,14 @@ public:
 		using pointer = value_type *;
 		using reference = value_type;
 		using wrapped_iter = vector<Value>::const_iterator;
+		// clang-format off
 		explicit ListIterator(wrapped_iter it) : it(it) {}
 		iterator &operator++() { ++it; return *this; }
 		iterator operator++(int) { iterator retval = *this; ++(*this); return retval; }
 		bool operator==(iterator other) const { return it == other.it; }
 		bool operator!=(iterator other) const { return !(*this == other); }
 		reference operator*() const { return ValueReader(*it); }
+		// clang-format on
 	private:
 		wrapped_iter it;
 	};
@@ -56,8 +57,7 @@ private:
 
 class ValueWriter {
 public:
-	ValueWriter(Value &value) noexcept
-	    : value(value) {
+	ValueWriter(Value &value) noexcept : value(value) {
 	}
 
 	void SetNull();

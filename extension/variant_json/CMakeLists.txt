@@ -8,9 +8,8 @@ include_directories(include)
 include_directories(../json/include)
 include_directories(../json/yyjson/include)
 
-set(VARIANT_JSON_EXTENSION_FILES
-    variant-extension.cpp
-    value_proxy.cpp)
+set(VARIANT_JSON_EXTENSION_FILES variant-extension.cpp value_proxy.cpp
+                                 converters.cpp)
 
 add_library(variant_json_extension STATIC ${VARIANT_JSON_EXTENSION_FILES})
 
