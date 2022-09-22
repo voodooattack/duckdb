@@ -141,8 +141,18 @@ elseif(${ENABLE_SANITIZER})
 endif()
 
 
-if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64")
-  set(DISABLE_VPTR_SANITIZER TRUE)
+if (${DISABLE_VPTR_SANITIZER})
+else()
+  if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64")
+    if("${CMAKE_CXX_COMPILER_VERSION}" VERSION_GREATER 14.0)
+      message(
+        WARNING
+          "Not disabling vptr sanitizer on M1 Macbook - set DISABLE_VPTR_SANITIZER manually if you run into issues with false positives in the sanitizer"
+      )
+    else()
+    set(DISABLE_VPTR_SANITIZER TRUE)
+    endif()
+  endif()
 endif()
 
 if(${ENABLE_UBSAN})
@@ -306,9 +316,9 @@ if(TREAT_WARNINGS_AS_ERRORS)
   message("Treating warnings as errors.")
 endif()
 
-if(!ASSERT_EXCEPTION)
-  set(CMAKE_CXX_FLAGS_DEBUG
-      "${CMAKE_CXX_FLAGS_DEBUG} -DDUCKDB_USE_STANDARD_ASSERT")
+if(ASSERT_EXCEPTION)
+else()
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DDUCKDB_CRASH_ON_ASSERT")
 endif()
 
 if(FORCE_ASSERT)
@@ -376,6 +386,8 @@ set(OS_ARCH "amd64")
 string(REGEX MATCH "(arm64|aarch64)" IS_ARM "${CMAKE_SYSTEM_PROCESSOR}")
 if(IS_ARM)
   set(OS_ARCH "arm64")
+elseif(FORCE_32_BIT)
+  set(OS_ARCH "i386")
 endif()
 
 if(APPLE)
