@@ -831,7 +831,7 @@ static string VariantSortHashInt(const string &arg) {
 	return res;
 }
 
-static bool VariantSortHashImpl(ValueWriter &writer, const ValueReader &arg) {
+static bool VariantSortHashImpl(ValueWriter &writer, const ValueReader &arg, const ValueReader &case_sensitive) {
 	auto doc = JSONCommon::ReadDocument(arg[1].GetString());
 	auto val = yyjson_doc_get_root(*doc);
 	if (!val || unsafe_yyjson_is_null(val)) {
@@ -883,6 +883,10 @@ static bool VariantSortHashImpl(ValueWriter &writer, const ValueReader &arg) {
 		result = VariantSortHashReal(unsafe_yyjson_get_str(val));
 	} else if (tp == "STRING" || is_json && js_tp == YYJSON_TYPE_STR) {
 		result = string("3") + unsafe_yyjson_get_str(val);
+		if (!case_sensitive.GetBool()) {
+			std::transform(result.begin(), result.end(), result.begin(),
+			               [](unsigned char c) { return std::tolower(c); });
+		}
 	} else if (tp == "BYTES") {
 		if (const char *s = yyjson_get_str(val)) {
 			idx_t size = Blob::FromBase64Size(s);
@@ -925,6 +929,10 @@ static bool VariantSortHashImpl(ValueWriter &writer, const ValueReader &arg) {
 		idx_t len;
 		unique_ptr<char, decltype(&free)> data(yyjson_mut_write(*res_doc, 0, &len), free);
 		result = '9';
+		if (!case_sensitive.GetBool() &&
+		    (tp == "STRING[]" || StringUtil::StartsWith(tp, "STRUCT") || StringUtil::StartsWith(tp, "JSON"))) {
+			std::transform(data.get(), data.get() + len, data.get(), [](unsigned char c) { return std::tolower(c); });
+		}
 		result.append(data.get(), len);
 	}
 	writer.SetString(move(result));
@@ -958,7 +966,11 @@ static bool VariantFromSortHashNumber(ValueWriter &writer, bool negative, int ex
 	}
 	Value v = s;
 	const LogicalType &tp = digits.size() <= 38 && ex >= digits.size() - 10 && ex <= 28 ? NumericType : BigNumericType;
-	if (!v.TryCastAs(tp)) {
+	try {
+		if (!v.TryCastAs(tp)) {
+			return false;
+		}
+	} catch (OutOfRangeException) {
 		return false;
 	}
 	return VariantWriter(tp).Process(writer, ValueReader(v));
@@ -1055,7 +1067,7 @@ static bool VariantFromSortHashImpl(ValueWriter &writer, const ValueReader &read
 
 static void VariantSortHash(DataChunk &args, ExpressionState &state, Vector &result) {
 	D_ASSERT(args.data[0].GetType() == VariantType);
-	ValueExecuteUnary(args, result, VariantSortHashImpl);
+	ValueExecuteBinary(args, result, VariantSortHashImpl);
 }
 
 static void VariantFromSortHash(DataChunk &args, ExpressionState &state, Vector &result) {
@@ -1104,8 +1116,8 @@ void VariantJsonExtension::Load(DuckDB &db) {
 	CreateScalarFunctionInfo variant_access_info(move(variant_access_set));
 	catalog.CreateFunction(context, &variant_access_info);
 
-	CreateScalarFunctionInfo sort_hash_info(
-	    ScalarFunction("variant_sort_hash", {VariantType}, LogicalType::VARCHAR, VariantSortHash));
+	CreateScalarFunctionInfo sort_hash_info(ScalarFunction("variant_sort_hash", {VariantType, LogicalType::BOOLEAN},
+	                                                       LogicalType::VARCHAR, VariantSortHash));
 	catalog.CreateFunction(context, &sort_hash_info);
 
 	CreateScalarFunctionInfo from_sort_hash_info(
