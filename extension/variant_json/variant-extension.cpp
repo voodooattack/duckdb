@@ -687,6 +687,23 @@ public:
 	}
 };
 
+class VariantReaderJSON : public VariantReaderBase {
+public:
+	bool ProcessScalar(ValueWriter &result, const ValueReader &arg) {
+		result.SetString(string(arg[1].GetString()));
+		return true;
+	}
+
+	bool ReadScalar(ValueWriter &result, yyjson_val *val) override {
+		auto res_doc = JSONCommon::CreateDocument();
+		yyjson_mut_doc_set_root(*res_doc, yyjson_val_mut_copy(*res_doc, val));
+		idx_t len;
+		unique_ptr<char, decltype(&free)> data(yyjson_mut_write(*res_doc, 0, &len), free);
+		result.SetString(string(data.get(), len));
+		return true;
+	}
+};
+
 template <class Reader>
 static void FromVariantFunc(DataChunk &args, ExpressionState &state, Vector &result) {
 	D_ASSERT(args.data[0].GetType() == VariantType);
@@ -1107,6 +1124,7 @@ void VariantJsonExtension::Load(DuckDB &db) {
 	REGISTER_FUNCTION(LogicalType::TIMESTAMP_TZ, timestamp, Timestamp)
 	REGISTER_FUNCTION(LogicalType::TIMESTAMP, datetime, Datetime)
 	REGISTER_FUNCTION(LogicalType::INTERVAL, interval, Interval)
+	REGISTER_FUNCTION(LogicalType::JSON, json, JSON)
 
 	ScalarFunctionSet variant_access_set("variant_access");
 	variant_access_set.AddFunction(
