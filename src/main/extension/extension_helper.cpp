@@ -66,6 +66,13 @@
 #include "sqlsmith-extension.hpp"
 #endif
 
+#if defined(BUILD_DATADOCS_EXTENSION) && !defined(DISABLE_BUILTIN_EXTENSIONS)
+#define DATADOCS_STATICALLY_LOADED true
+#include "datadocs-extension.hpp"
+#else
+#define DATADOCS_STATICALLY_LOADED false
+#endif
+
 #if defined(BUILD_INET_EXTENSION) && !defined(DISABLE_BUILTIN_EXTENSIONS)
 #include "inet-extension.hpp"
 #endif
@@ -85,6 +92,7 @@ static DefaultExtension internal_extensions[] = {
     {"json", "Adds support for JSON operations", JSON_STATICALLY_LOADED},
     {"sqlite_scanner", "Adds support for reading SQLite database files", false},
     {"postgres_scanner", "Adds support for reading from a Postgres database", false},
+    {"datadocs", "Datadocs functions", DATADOCS_STATICALLY_LOADED},
     {"inet", "Adds support for IP-related data types and functions", false},
     {nullptr, nullptr, false}};
 
@@ -104,8 +112,8 @@ DefaultExtension ExtensionHelper::GetDefaultExtension(idx_t index) {
 // Load Statically Compiled Extension
 //===--------------------------------------------------------------------===//
 void ExtensionHelper::LoadAllExtensions(DuckDB &db) {
-	unordered_set<string> extensions {"parquet",    "icu",  "tpch",  "tpcds",    "fts", "httpfs",
-	                                  "visualizer", "json", "excel", "sqlsmith", "inet"};
+	unordered_set<string> extensions {"parquet",    "icu",  "tpch",  "tpcds",    "fts",  "httpfs",
+	                                  "visualizer", "json", "excel", "sqlsmith", "inet", "datadocs"};
 	for (auto &ext : extensions) {
 		LoadExtensionInternal(db, ext, true);
 	}
@@ -207,6 +215,13 @@ ExtensionLoadResult ExtensionHelper::LoadExtensionInternal(DuckDB &db, const std
 		db.LoadExtension<INETExtension>();
 #else
 		// excel extension required but not build: skip this test
+		return ExtensionLoadResult::NOT_LOADED;
+#endif
+	} else if (extension == "datadocs") {
+#if DATADOCS_STATICALLY_LOADED
+		db.LoadExtension<DataDocsExtension>();
+#else
+		// datadocs extension required but not build: skip this test
 		return ExtensionLoadResult::NOT_LOADED;
 #endif
 	} else {
