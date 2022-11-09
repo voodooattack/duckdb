@@ -2,7 +2,7 @@
 
 #include "duckdb.hpp"
 
-#include "value_proxy.hpp"
+#include "vector_proxy.hpp"
 
 namespace duckdb {
 
@@ -181,7 +181,7 @@ ValueWriter ValueWriter::operator[](idx_t index) {
 	return ValueWriter(const_cast<Value &>(StructValue::GetChildren(value)[index]));
 }
 
-void ValueExecuteUnary(DataChunk &args, Vector &result, value_unary_func func) {
+void VectorExecuteUnary(DataChunk &args, Vector &result, value_unary_func func) {
 	result.SetVectorType(args.data[0].GetVectorType() == VectorType::CONSTANT_VECTOR ? VectorType::CONSTANT_VECTOR
 	                                                                                 : VectorType::FLAT_VECTOR);
 	for (idx_t i_row = 0; i_row < args.size(); ++i_row) {
@@ -196,7 +196,7 @@ void ValueExecuteUnary(DataChunk &args, Vector &result, value_unary_func func) {
 	}
 }
 
-void ValueExecuteBinary(DataChunk &args, Vector &result, value_binary_func func) {
+void VectorExecuteBinary(DataChunk &args, Vector &result, value_binary_func func) {
 	bool is_constant = true;
 	for (idx_t i = 0; i < args.ColumnCount(); ++i) {
 		if (args.data[i].GetVectorType() != VectorType::CONSTANT_VECTOR) {

@@ -2,7 +2,7 @@
 
 #include "duckdb/common/types/cast_helpers.hpp"
 
-#include "converters.h"
+#include "converters.hpp"
 
 namespace duckdb {
 
@@ -15,7 +15,7 @@ static void FormatTwoDigits(int value, char buffer[], idx_t &length) {
 	if (value < 10) {
 		buffer[length++] = '0' + value;
 	} else {
-		idx_t index = idx_t(value * 2);
+		idx_t index = (idx_t)value * 2;
 		buffer[length++] = duckdb_fmt::internal::data::digits[index];
 		buffer[length++] = duckdb_fmt::internal::data::digits[index + 1];
 	}

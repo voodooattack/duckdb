@@ -13,28 +13,24 @@
 #include "json_common.hpp"
 
 #include "datadocs-extension.hpp"
-#include "value_proxy.hpp"
-#include "converters.h"
+#include "datadocs.hpp"
+#include "vector_proxy.hpp"
+#include "converters.hpp"
 
 namespace duckdb {
 
-namespace {
-
-using namespace std::placeholders;
+const LogicalType DDNumericType = LogicalType::DECIMAL(dd_numeric_width, dd_numeric_scale);
 
 // clang-format off
-static const LogicalType VariantType = LogicalType::STRUCT({
+const LogicalType DDVariantType = LogicalType::STRUCT({
 	{"__type", LogicalType::VARCHAR},
 	{"__value", LogicalType::JSON}
 });
 // clang-format on
 
-constexpr int numeric_width = 38;
-constexpr int numeric_scale = 9;
-constexpr int bignumeric_width = 38;
-constexpr int bignumeric_scale = 18;
-static const LogicalType NumericType = LogicalType::DECIMAL(numeric_width, numeric_scale);
-static const LogicalType BigNumericType = LogicalType::DECIMAL(bignumeric_width, bignumeric_scale);
+namespace {
+
+using namespace std::placeholders;
 
 class VariantWriter {
 public:
@@ -66,13 +62,7 @@ public:
 			write_func = &VariantWriter::WriteFloat64;
 			break;
 		case LogicalTypeId::DECIMAL: {
-			uint8_t width, scale;
-			type->GetDecimalProperties(width, scale);
-			if (width - scale <= 29 && scale <= 9) {
-				type_name = is_list ? "NUMERIC[]" : "NUMERIC";
-			} else {
-				type_name = is_list ? "BIGNUMERIC[]" : "BIGNUMERIC";
-			}
+			type_name = is_list ? "NUMERIC[]" : "NUMERIC";
 			write_func = &VariantWriter::WriteNumeric;
 			break;
 		}
@@ -154,7 +144,7 @@ public:
 		result.SetStruct();
 		result[0].SetString(type_name);
 		yyjson_mut_doc_set_root(doc, root);
-		idx_t len;
+		size_t len;
 		unique_ptr<char, decltype(&free)> data(yyjson_mut_write(doc, 0, &len), free);
 		result[1].SetString(string(data.get(), len));
 		return true;
@@ -320,9 +310,9 @@ private:
 };
 
 static void VariantFunction(DataChunk &args, ExpressionState &state, Vector &result) {
-	D_ASSERT(result.GetType() == VariantType);
+	D_ASSERT(result.GetType() == DDVariantType);
 	VariantWriter writer(args.data[0].GetType());
-	ValueExecuteUnary(args, result, std::bind(&VariantWriter::Process, &writer, _1, _2));
+	VectorExecuteUnary(args, result, std::bind(&VariantWriter::Process, &writer, _1, _2));
 }
 
 class VariantReaderBase {
@@ -431,64 +421,26 @@ public:
 		string message(1, ' ');
 		switch (unsafe_yyjson_get_tag(val)) {
 		case YYJSON_TYPE_NUM | YYJSON_SUBTYPE_REAL:
-			if (!TryCastToDecimal::Operation(unsafe_yyjson_get_real(val), res, &message, numeric_width,
-			                                 numeric_scale)) {
+			if (!TryCastToDecimal::Operation(unsafe_yyjson_get_real(val), res, &message, dd_numeric_width,
+			                                 dd_numeric_scale)) {
 				return false;
 			}
 			break;
 		case YYJSON_TYPE_NUM | YYJSON_SUBTYPE_UINT:
-			if (!TryCastToDecimal::Operation(unsafe_yyjson_get_uint(val), res, &message, numeric_width,
-			                                 numeric_scale)) {
+			if (!TryCastToDecimal::Operation(unsafe_yyjson_get_uint(val), res, &message, dd_numeric_width,
+			                                 dd_numeric_scale)) {
 				return false;
 			}
 			break;
 		case YYJSON_TYPE_NUM | YYJSON_SUBTYPE_SINT:
-			if (!TryCastToDecimal::Operation(unsafe_yyjson_get_sint(val), res, &message, numeric_width,
-			                                 numeric_scale)) {
+			if (!TryCastToDecimal::Operation(unsafe_yyjson_get_sint(val), res, &message, dd_numeric_width,
+			                                 dd_numeric_scale)) {
 				return false;
 			}
 			break;
 		case YYJSON_TYPE_STR | YYJSON_SUBTYPE_NONE:
-			if (!TryCastToDecimal::Operation(string_t(unsafe_yyjson_get_str(val)), res, &message, numeric_width,
-			                                 numeric_scale)) {
-				return false;
-			}
-			break;
-		default:
-			return false;
-		}
-		result.SetNumeric(res);
-		return true;
-	}
-};
-
-class VariantReaderBigNumeric : public VariantReaderBase {
-public:
-	bool ReadScalar(ValueWriter &result, yyjson_val *val) override {
-		hugeint_t res;
-		string message(1, ' ');
-		switch (unsafe_yyjson_get_tag(val)) {
-		case YYJSON_TYPE_NUM | YYJSON_SUBTYPE_REAL:
-			if (!TryCastToDecimal::Operation(unsafe_yyjson_get_real(val), res, &message, bignumeric_width,
-			                                 bignumeric_scale)) {
-				return false;
-			}
-			break;
-		case YYJSON_TYPE_NUM | YYJSON_SUBTYPE_UINT:
-			if (!TryCastToDecimal::Operation(unsafe_yyjson_get_uint(val), res, &message, bignumeric_width,
-			                                 bignumeric_scale)) {
-				return false;
-			}
-			break;
-		case YYJSON_TYPE_NUM | YYJSON_SUBTYPE_SINT:
-			if (!TryCastToDecimal::Operation(unsafe_yyjson_get_sint(val), res, &message, bignumeric_width,
-			                                 bignumeric_scale)) {
-				return false;
-			}
-			break;
-		case YYJSON_TYPE_STR | YYJSON_SUBTYPE_NONE:
-			if (!TryCastToDecimal::Operation(string_t(unsafe_yyjson_get_str(val)), res, &message, bignumeric_width,
-			                                 bignumeric_scale)) {
+			if (!TryCastToDecimal::Operation(string_t(unsafe_yyjson_get_str(val)), res, &message, dd_numeric_width,
+			                                 dd_numeric_scale)) {
 				return false;
 			}
 			break;
@@ -695,7 +647,7 @@ public:
 	bool ReadScalar(ValueWriter &result, yyjson_val *val) override {
 		auto res_doc = JSONCommon::CreateDocument();
 		yyjson_mut_doc_set_root(*res_doc, yyjson_val_mut_copy(*res_doc, val));
-		idx_t len;
+		size_t len;
 		unique_ptr<char, decltype(&free)> data(yyjson_mut_write(*res_doc, 0, &len), free);
 		result.SetString(string(data.get(), len));
 		return true;
@@ -704,16 +656,16 @@ public:
 
 template <class Reader>
 static void FromVariantFunc(DataChunk &args, ExpressionState &state, Vector &result) {
-	D_ASSERT(args.data[0].GetType() == VariantType);
+	D_ASSERT(args.data[0].GetType() == DDVariantType);
 	Reader reader;
-	ValueExecuteUnary(args, result, std::bind(&Reader::ProcessScalar, &reader, _1, _2));
+	VectorExecuteUnary(args, result, std::bind(&Reader::ProcessScalar, &reader, _1, _2));
 }
 
 template <class Reader>
 static void FromVariantListFunc(DataChunk &args, ExpressionState &state, Vector &result) {
-	D_ASSERT(args.data[0].GetType() == VariantType);
+	D_ASSERT(args.data[0].GetType() == DDVariantType);
 	Reader reader;
-	ValueExecuteUnary(args, result, std::bind(&Reader::ProcessList, &reader, _1, _2));
+	VectorExecuteUnary(args, result, std::bind(&Reader::ProcessList, &reader, _1, _2));
 }
 
 static bool VariantAccessWrite(ValueWriter &result, const ValueReader &arg, yyjson_val *val) {
@@ -752,7 +704,7 @@ static bool VariantAccessWrite(ValueWriter &result, const ValueReader &arg, yyjs
 	result[0].SetString(move(res_type));
 	auto res_doc = JSONCommon::CreateDocument();
 	yyjson_mut_doc_set_root(*res_doc, yyjson_val_mut_copy(*res_doc, val));
-	idx_t len;
+	size_t len;
 	unique_ptr<char, decltype(&free)> data(yyjson_mut_write(*res_doc, 0, &len), free);
 	result[1].SetString(string(data.get(), len));
 	return true;
@@ -776,13 +728,13 @@ static bool VariantAccessKeyImpl(ValueWriter &result, const ValueReader &arg, co
 }
 
 static void VariantAccessIndexFunc(DataChunk &args, ExpressionState &state, Vector &result) {
-	D_ASSERT(args.data[0].GetType() == VariantType);
-	ValueExecuteBinary(args, result, VariantAccessIndexImpl);
+	D_ASSERT(args.data[0].GetType() == DDVariantType);
+	VectorExecuteBinary(args, result, VariantAccessIndexImpl);
 }
 
 static void VariantAccessKeyFunc(DataChunk &args, ExpressionState &state, Vector &result) {
-	D_ASSERT(args.data[0].GetType() == VariantType);
-	ValueExecuteBinary(args, result, VariantAccessKeyImpl);
+	D_ASSERT(args.data[0].GetType() == DDVariantType);
+	VectorExecuteBinary(args, result, VariantAccessKeyImpl);
 }
 
 static string VariantSortHashReal(std::string_view arg) {
@@ -893,7 +845,7 @@ static bool VariantSortHashImpl(ValueWriter &writer, const ValueReader &arg, con
 		default:
 			return false;
 		}
-	} else if (tp == "BIGNUMERIC" || tp == "NUMERIC") {
+	} else if (tp == "NUMERIC") {
 		D_ASSERT(js_tp == YYJSON_TYPE_STR);
 		result = VariantSortHashReal(unsafe_yyjson_get_str(val));
 	} else if (tp == "STRING" || is_json && js_tp == YYJSON_TYPE_STR) {
@@ -941,7 +893,7 @@ static bool VariantSortHashImpl(ValueWriter &writer, const ValueReader &arg, con
 	} else {
 		auto res_doc = JSONCommon::CreateDocument();
 		yyjson_mut_doc_set_root(*res_doc, yyjson_val_mut_copy(*res_doc, val));
-		idx_t len;
+		size_t len;
 		unique_ptr<char, decltype(&free)> data(yyjson_mut_write(*res_doc, 0, &len), free);
 		result = '9';
 		if (!case_sensitive.GetBool() &&
@@ -980,15 +932,14 @@ static bool VariantFromSortHashNumber(ValueWriter &writer, bool negative, int ex
 		return VariantWriter(LogicalType::DOUBLE).Process(writer, ValueReader(d));
 	}
 	Value v = s;
-	const LogicalType &tp = digits.size() <= 38 && ex >= digits.size() - 10 && ex <= 28 ? NumericType : BigNumericType;
 	try {
-		if (!v.DefaultTryCastAs(tp)) {
+		if (!v.DefaultTryCastAs(DDNumericType)) {
 			return false;
 		}
 	} catch (OutOfRangeException) {
 		return false;
 	}
-	return VariantWriter(tp).Process(writer, ValueReader(v));
+	return VariantWriter(DDNumericType).Process(writer, ValueReader(v));
 }
 
 static bool VariantFromSortHashImpl(ValueWriter &writer, const ValueReader &reader) {
@@ -1081,23 +1032,23 @@ static bool VariantFromSortHashImpl(ValueWriter &writer, const ValueReader &read
 }
 
 static void VariantSortHash(DataChunk &args, ExpressionState &state, Vector &result) {
-	D_ASSERT(args.data[0].GetType() == VariantType);
-	ValueExecuteBinary(args, result, VariantSortHashImpl);
+	D_ASSERT(args.data[0].GetType() == DDVariantType);
+	VectorExecuteBinary(args, result, VariantSortHashImpl);
 }
 
 static void VariantFromSortHash(DataChunk &args, ExpressionState &state, Vector &result) {
 	D_ASSERT(args.data[0].GetType().id() == LogicalTypeId::VARCHAR);
-	ValueExecuteUnary(args, result, VariantFromSortHashImpl);
+	VectorExecuteUnary(args, result, VariantFromSortHashImpl);
 }
 
 } // namespace
 
 #define REGISTER_FUNCTION(TYPE, SQL_NAME, C_NAME)                                                                      \
 	CreateScalarFunctionInfo from_variant_##SQL_NAME##_info(                                                           \
-	    ScalarFunction("from_variant_" #SQL_NAME, {VariantType}, TYPE, FromVariantFunc<VariantReader##C_NAME>));       \
+	    ScalarFunction("from_variant_" #SQL_NAME, {DDVariantType}, TYPE, FromVariantFunc<VariantReader##C_NAME>));     \
 	catalog.CreateFunction(context, &from_variant_##SQL_NAME##_info);                                                  \
 	CreateScalarFunctionInfo from_variant_##SQL_NAME##_array_info(                                                     \
-	    ScalarFunction("from_variant_" #SQL_NAME "_array", {VariantType}, LogicalType::LIST(TYPE),                     \
+	    ScalarFunction("from_variant_" #SQL_NAME "_array", {DDVariantType}, LogicalType::LIST(TYPE),                   \
 	                   FromVariantListFunc<VariantReader##C_NAME>));                                                   \
 	catalog.CreateFunction(context, &from_variant_##SQL_NAME##_array_info);
 
@@ -1105,14 +1056,14 @@ void DataDocsExtension::LoadVariant(Connection &con) {
 	auto &context = *con.context;
 	auto &catalog = Catalog::GetCatalog(context);
 
-	CreateScalarFunctionInfo variant_info(ScalarFunction("variant", {LogicalType::ANY}, VariantType, VariantFunction));
+	CreateScalarFunctionInfo variant_info(
+	    ScalarFunction("variant", {LogicalType::ANY}, DDVariantType, VariantFunction));
 	catalog.CreateFunction(context, &variant_info);
 
 	REGISTER_FUNCTION(LogicalType::BOOLEAN, bool, Bool)
 	REGISTER_FUNCTION(LogicalType::BIGINT, int64, Int64)
 	REGISTER_FUNCTION(LogicalType::DOUBLE, float64, Float64)
-	REGISTER_FUNCTION(NumericType, numeric, Numeric)
-	REGISTER_FUNCTION(BigNumericType, bignumeric, BigNumeric)
+	REGISTER_FUNCTION(DDNumericType, numeric, Numeric)
 	REGISTER_FUNCTION(LogicalType::VARCHAR, string, String)
 	REGISTER_FUNCTION(LogicalType::BLOB, bytes, Bytes)
 	REGISTER_FUNCTION(LogicalType::DATE, date, Date)
@@ -1124,18 +1075,18 @@ void DataDocsExtension::LoadVariant(Connection &con) {
 
 	ScalarFunctionSet variant_access_set("variant_access");
 	variant_access_set.AddFunction(
-	    ScalarFunction({VariantType, LogicalType::BIGINT}, VariantType, VariantAccessIndexFunc));
+	    ScalarFunction({DDVariantType, LogicalType::BIGINT}, DDVariantType, VariantAccessIndexFunc));
 	variant_access_set.AddFunction(
-	    ScalarFunction({VariantType, LogicalType::VARCHAR}, VariantType, VariantAccessKeyFunc));
+	    ScalarFunction({DDVariantType, LogicalType::VARCHAR}, DDVariantType, VariantAccessKeyFunc));
 	CreateScalarFunctionInfo variant_access_info(move(variant_access_set));
 	catalog.CreateFunction(context, &variant_access_info);
 
-	CreateScalarFunctionInfo sort_hash_info(ScalarFunction("variant_sort_hash", {VariantType, LogicalType::BOOLEAN},
+	CreateScalarFunctionInfo sort_hash_info(ScalarFunction("variant_sort_hash", {DDVariantType, LogicalType::BOOLEAN},
 	                                                       LogicalType::VARCHAR, VariantSortHash));
 	catalog.CreateFunction(context, &sort_hash_info);
 
 	CreateScalarFunctionInfo from_sort_hash_info(
-	    ScalarFunction("variant_from_sort_hash", {LogicalType::VARCHAR}, VariantType, VariantFromSortHash));
+	    ScalarFunction("variant_from_sort_hash", {LogicalType::VARCHAR}, DDVariantType, VariantFromSortHash));
 	catalog.CreateFunction(context, &from_sort_hash_info);
 }
 

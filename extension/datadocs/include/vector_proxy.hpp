@@ -81,9 +81,9 @@ private:
 };
 
 typedef std::function<bool(ValueWriter &, const ValueReader &)> value_unary_func;
-void ValueExecuteUnary(DataChunk &args, Vector &result, value_unary_func func);
+void VectorExecuteUnary(DataChunk &args, Vector &result, value_unary_func func);
 
 typedef std::function<bool(ValueWriter &, const ValueReader &, const ValueReader &)> value_binary_func;
-void ValueExecuteBinary(DataChunk &args, Vector &result, value_binary_func func);
+void VectorExecuteBinary(DataChunk &args, Vector &result, value_binary_func func);
 
 } // namespace duckdb

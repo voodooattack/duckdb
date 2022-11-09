@@ -8,7 +8,7 @@ include_directories(include)
 include_directories(../json/include)
 include_directories(../json/yyjson/include)
 
-set(DATADOCS_EXTENSION_FILES datadocs-extension.cpp variant.cpp value_proxy.cpp
+set(DATADOCS_EXTENSION_FILES datadocs-extension.cpp variant.cpp vector_proxy.cpp
                              converters.cpp)
 
 add_library(datadocs_extension STATIC ${DATADOCS_EXTENSION_FILES})
