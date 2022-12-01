@@ -1,9 +1,10 @@
 #include "duckdb/execution/index/art/node.hpp"
 
-#include "duckdb/execution/index/art/art.hpp"
 #include "duckdb/common/exception.hpp"
-#include "duckdb/execution/index/art/swizzleable_pointer.hpp"
 #include "duckdb/common/swap.hpp"
+#include "duckdb/execution/index/art/art.hpp"
+#include "duckdb/execution/index/art/swizzleable_pointer.hpp"
+#include "duckdb/storage/storage_manager.hpp"
 
 namespace duckdb {
 
@@ -34,7 +35,7 @@ InternalType::InternalType(Node *n) {
 	}
 }
 
-void InternalType::Set(uint8_t *key_p, uint16_t key_size_p, SwizzleablePointer *children_p, uint16_t children_size_p) {
+void InternalType::Set(uint8_t *key_p, uint16_t key_size_p, ARTPointer *children_p, uint16_t children_size_p) {
 	key = key_p;
 	key_size = key_size_p;
 	children = children_p;
@@ -113,23 +114,106 @@ NodeType Node::GetTypeBySize(idx_t size) {
 }
 
 void Node::New(NodeType &type, Node *&node) {
-
 	switch (type) {
 	case NodeType::N4:
-		node = new Node4();
+		node = (Node *)Node4::New();
 		return;
 	case NodeType::N16:
-		node = new Node16();
+		node = (Node *)Node16::New();
 		return;
 	case NodeType::N48:
-		node = new Node48();
+		node = (Node *)Node48::New();
 		return;
 	case NodeType::N256:
-		node = new Node256();
+		node = (Node *)Node256::New();
 		return;
 	default:
 		throw InternalException("Unrecognized type for new node creation!");
 	}
+}
+
+Node4 *Node4::New() {
+	return AllocateObject<Node4>();
+}
+
+Node16 *Node16::New() {
+	return AllocateObject<Node16>();
+}
+
+Node48 *Node48::New() {
+	return AllocateObject<Node48>();
+}
+
+Node256 *Node256::New() {
+	return AllocateObject<Node256>();
+}
+
+Leaf *Leaf::New(Key &value, uint32_t depth, row_t row_id) {
+	return AllocateObject<Leaf>(value, depth, row_id);
+}
+
+Leaf *Leaf::New(Key &value, uint32_t depth, row_t *row_ids, idx_t num_elements) {
+	return AllocateObject<Leaf>(value, depth, row_ids, num_elements);
+}
+
+Leaf *Leaf::New(row_t *row_ids, idx_t num_elements, Prefix &prefix) {
+	return AllocateObject<Leaf>(row_ids, num_elements, prefix);
+}
+
+Leaf *Leaf::New(row_t row_id, Prefix &prefix) {
+	return AllocateObject<Leaf>(row_id, prefix);
+}
+
+void Node::Delete(Node *ptr) {
+	switch (ptr->type) {
+	case NodeType::NLeaf:
+		DestroyObject((Leaf *)ptr);
+		break;
+	case NodeType::N4:
+		DestroyObject((Node4 *)ptr);
+		break;
+	case NodeType::N16:
+		DestroyObject((Node16 *)ptr);
+		break;
+	case NodeType::N48:
+		DestroyObject((Node48 *)ptr);
+		break;
+	case NodeType::N256:
+		DestroyObject((Node256 *)ptr);
+		break;
+	default:
+		throw InternalException("eek");
+	}
+}
+
+string Node::ToString(ART &art) {
+
+	string str = "Node";
+	switch (this->type) {
+	case NodeType::NLeaf:
+		return Leaf::ToString(this);
+	case NodeType::N4:
+		str += to_string(Node4::GetSize());
+		break;
+	case NodeType::N16:
+		str += to_string(Node16::GetSize());
+		break;
+	case NodeType::N48:
+		str += to_string(Node48::GetSize());
+		break;
+	case NodeType::N256:
+		str += to_string(Node256::GetSize());
+		break;
+	}
+
+	str += ": [";
+	auto next_pos = GetNextPos(DConstants::INVALID_INDEX);
+	while (next_pos != DConstants::INVALID_INDEX) {
+		auto child = GetChild(art, next_pos);
+		str += "(" + to_string(next_pos) + ", " + child->ToString(art) + ")";
+		next_pos = GetNextPos(next_pos);
+	}
+	return str + "]";
 }
 
 BlockPointer Node::SerializeInternal(ART &art, duckdb::MetaBlockWriter &writer, InternalType &internal_type) {
@@ -138,12 +222,11 @@ BlockPointer Node::SerializeInternal(ART &art, duckdb::MetaBlockWriter &writer, 
 	for (idx_t i = 0; i < internal_type.children_size; i++) {
 		child_offsets.emplace_back(internal_type.children[i].Serialize(art, writer));
 	}
-	auto block_id = writer.block->id;
-	uint32_t offset = writer.offset;
+	auto ptr = writer.GetBlockPointer();
 	// Write Node Type
 	writer.Write(type);
 	// Write count
-	writer.Write(count);
+	writer.Write<uint16_t>(count);
 	// Write Prefix
 	prefix.Serialize(writer);
 	// Write Key values
@@ -155,7 +238,7 @@ BlockPointer Node::SerializeInternal(ART &art, duckdb::MetaBlockWriter &writer, 
 		writer.Write(offsets.block_id);
 		writer.Write(offsets.offset);
 	}
-	return {block_id, offset};
+	return ptr;
 }
 
 BlockPointer Node::Serialize(ART &art, duckdb::MetaBlockWriter &writer) {
@@ -186,12 +269,12 @@ void Node::DeserializeInternal(duckdb::MetaBlockReader &reader) {
 	}
 	// Get Child offsets
 	for (idx_t i = 0; i < internal_type.children_size; i++) {
-		internal_type.children[i] = SwizzleablePointer(reader);
+		internal_type.children[i] = ARTPointer(reader);
 	}
 }
 
 Node *Node::Deserialize(ART &art, idx_t block_id, idx_t offset) {
-	MetaBlockReader reader(art.db, block_id);
+	MetaBlockReader reader(art.table_io_manager.GetIndexBlockManager(), block_id);
 	reader.offset = offset;
 	auto n = reader.Read<uint8_t>();
 	NodeType node_type(static_cast<NodeType>(n));
@@ -200,19 +283,19 @@ Node *Node::Deserialize(ART &art, idx_t block_id, idx_t offset) {
 	case NodeType::NLeaf:
 		return Leaf::Deserialize(reader);
 	case NodeType::N4: {
-		deserialized_node = (Node *)new Node4();
+		deserialized_node = (Node *)Node4::New();
 		break;
 	}
 	case NodeType::N16: {
-		deserialized_node = (Node *)new Node16();
+		deserialized_node = (Node *)Node16::New();
 		break;
 	}
 	case NodeType::N48: {
-		deserialized_node = (Node *)new Node48();
+		deserialized_node = (Node *)Node48::New();
 		break;
 	}
 	case NodeType::N256: {
-		deserialized_node = (Node *)new Node256();
+		deserialized_node = (Node *)Node256::New();
 		break;
 	}
 	}
@@ -221,7 +304,6 @@ Node *Node::Deserialize(ART &art, idx_t block_id, idx_t offset) {
 }
 
 void UpdateParentsOfNodes(Node *&l_node, Node *&r_node, ParentsOfNodes &parents) {
-
 	if (parents.l_parent) {
 		parents.l_parent->ReplaceChildPointer(parents.l_pos, l_node);
 	}
@@ -230,7 +312,7 @@ void UpdateParentsOfNodes(Node *&l_node, Node *&r_node, ParentsOfNodes &parents)
 	}
 }
 
-void Merge(MergeInfo &info, idx_t depth, ParentsOfNodes &parents) {
+bool Merge(MergeInfo &info, idx_t depth, ParentsOfNodes &parents) {
 
 	// always try to merge the smaller node into the bigger node
 	// because maybe there is enough free space in the bigger node to fit the smaller one
@@ -255,14 +337,16 @@ void Merge(MergeInfo &info, idx_t depth, ParentsOfNodes &parents) {
 	case NodeType::NLeaf:
 		D_ASSERT(info.l_node->type == NodeType::NLeaf);
 		D_ASSERT(info.r_node->type == NodeType::NLeaf);
-		auto has_constraint = info.l_art->IsPrimary() || info.l_art->IsUnique();
-		return Leaf::Merge(has_constraint, info.l_node, info.r_node);
+		if (info.l_art->IsUnique()) {
+			return false;
+		}
+		Leaf::Merge(info.l_node, info.r_node);
+		return true;
 	}
 	throw InternalException("Invalid node type for right node in merge.");
 }
 
-void ResolvePrefixesAndMerge(MergeInfo &info, idx_t depth, ParentsOfNodes &parents) {
-
+bool ResolvePrefixesAndMerge(MergeInfo &info, idx_t depth, ParentsOfNodes &parents) {
 	auto &l_node = info.l_node;
 	auto &r_node = info.r_node;
 	Node *null_parent = nullptr;
@@ -302,7 +386,7 @@ void ResolvePrefixesAndMerge(MergeInfo &info, idx_t depth, ParentsOfNodes &paren
 			Node::InsertChild(l_node, mismatch_byte, r_node);
 			UpdateParentsOfNodes(l_node, null_parent, parents);
 			r_node = nullptr;
-			return;
+			return true;
 		}
 
 		// recurse
@@ -315,7 +399,7 @@ void ResolvePrefixesAndMerge(MergeInfo &info, idx_t depth, ParentsOfNodes &paren
 	// prefixes differ, create new node and insert both nodes as children
 
 	// create new node
-	Node *new_node = new Node4();
+	Node *new_node = Node4::New();
 	new_node->prefix = Prefix(l_node->prefix, mismatch_pos);
 
 	// insert l_node, break up prefix of l_node
@@ -329,9 +413,10 @@ void ResolvePrefixesAndMerge(MergeInfo &info, idx_t depth, ParentsOfNodes &paren
 	l_node = new_node;
 	UpdateParentsOfNodes(l_node, null_parent, parents);
 	r_node = nullptr;
+	return true;
 }
 
-void Node::MergeAtByte(MergeInfo &info, idx_t depth, idx_t &l_child_pos, idx_t &r_pos, uint8_t &key_byte,
+bool Node::MergeAtByte(MergeInfo &info, idx_t depth, idx_t &l_child_pos, idx_t &r_pos, uint8_t &key_byte,
                        Node *&l_parent, idx_t l_pos) {
 
 	auto r_child = info.r_node->GetChild(*info.r_art, r_pos);
@@ -343,22 +428,22 @@ void Node::MergeAtByte(MergeInfo &info, idx_t depth, idx_t &l_child_pos, idx_t &
 			l_parent->ReplaceChildPointer(l_pos, info.l_node);
 		}
 		info.r_node->ReplaceChildPointer(r_pos, nullptr);
-		return;
+		return true;
 	}
 
 	// recurse
 	auto l_child = info.l_node->GetChild(*info.l_art, l_child_pos);
 	MergeInfo child_info(info.l_art, info.r_art, l_child, r_child);
 	ParentsOfNodes child_parents(info.l_node, l_child_pos, info.r_node, r_pos);
-	ResolvePrefixesAndMerge(child_info, depth + 1, child_parents);
+	return ResolvePrefixesAndMerge(child_info, depth + 1, child_parents);
 }
 
-void Node::MergeARTs(ART *l_art, ART *r_art) {
+bool Node::MergeARTs(ART *l_art, ART *r_art) {
 
 	Node *null_parent = nullptr;
 	MergeInfo info(l_art, r_art, l_art->tree, r_art->tree);
 	ParentsOfNodes parents(null_parent, 0, null_parent, 0);
-	ResolvePrefixesAndMerge(info, 0, parents);
+	return ResolvePrefixesAndMerge(info, 0, parents);
 }
 
 } // namespace duckdb

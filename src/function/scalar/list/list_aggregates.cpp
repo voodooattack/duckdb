@@ -4,6 +4,7 @@
 #include "duckdb/function/aggregate/nested_functions.hpp"
 #include "duckdb/function/scalar/nested_functions.hpp"
 #include "duckdb/planner/expression/bound_aggregate_expression.hpp"
+#include "duckdb/planner/expression/bound_constant_expression.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/planner/expression_binder.hpp"
 #include "duckdb/function/function_binder.hpp"
@@ -410,7 +411,7 @@ static unique_ptr<FunctionData> ListAggregatesBind(ClientContext &context, Scala
 			throw InvalidInputException("Aggregate function name must be a constant");
 		}
 		// get the function name
-		Value function_value = ExpressionExecutor::EvaluateScalar(*arguments[1]);
+		Value function_value = ExpressionExecutor::EvaluateScalar(context, *arguments[1]);
 		function_name = function_value.ToString();
 	}
 

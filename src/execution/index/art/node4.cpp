@@ -30,7 +30,7 @@ idx_t Node4::GetChildGreaterEqual(uint8_t k, bool &equal) {
 			return pos;
 		}
 	}
-	return Node::GetChildGreaterEqual(k, equal);
+	return DConstants::INVALID_INDEX;
 }
 
 idx_t Node4::GetMin() {
@@ -64,7 +64,7 @@ void Node4::InsertChild(Node *&node, uint8_t key_byte, Node *new_child) {
 		while ((pos < node->count) && (n->key[pos] < key_byte)) {
 			pos++;
 		}
-		if (n->children[pos] != 0) {
+		if (n->children[pos]) {
 			for (idx_t i = n->count; i > pos; i--) {
 				n->key[i] = n->key[i - 1];
 				n->children[i] = n->children[i - 1];
@@ -75,7 +75,7 @@ void Node4::InsertChild(Node *&node, uint8_t key_byte, Node *new_child) {
 		n->count++;
 	} else {
 		// Grow to Node16
-		auto new_node = new Node16();
+		auto new_node = Node16::New();
 		new_node->count = 4;
 		new_node->prefix = move(node->prefix);
 		for (idx_t i = 0; i < 4; i++) {
@@ -84,7 +84,7 @@ void Node4::InsertChild(Node *&node, uint8_t key_byte, Node *new_child) {
 			n->children[i] = nullptr;
 		}
 		// Delete old node and replace it with new Node16
-		delete node;
+		Node::Delete(node);
 		node = new_node;
 		Node16::InsertChild(node, key_byte, new_child);
 	}
@@ -112,20 +112,23 @@ void Node4::EraseChild(Node *&node, int pos, ART &art) {
 		// concatenate prefixes
 		child_ref->prefix.Concatenate(n->key[0], node->prefix);
 		n->children[0] = nullptr;
-		delete node;
+		Node::Delete(node);
 		node = child_ref;
 	}
 }
 
-void Node4::Merge(MergeInfo &info, idx_t depth, Node *&l_parent, idx_t l_pos) {
+bool Node4::Merge(MergeInfo &info, idx_t depth, Node *&l_parent, idx_t l_pos) {
 
 	Node4 *r_n = (Node4 *)info.r_node;
 
 	for (idx_t i = 0; i < info.r_node->count; i++) {
 
 		auto l_child_pos = info.l_node->GetChildPos(r_n->key[i]);
-		Node::MergeAtByte(info, depth, l_child_pos, i, r_n->key[i], l_parent, l_pos);
+		if (!Node::MergeAtByte(info, depth, l_child_pos, i, r_n->key[i], l_parent, l_pos)) {
+			return false;
+		}
 	}
+	return true;
 }
 
 idx_t Node4::GetSize() {

@@ -78,10 +78,13 @@ unique_ptr<LogicalOperator> FlattenDependentJoins::PushDownDependentJoinInternal
 		// we reached a node without correlated expressions
 		// we can eliminate the dependent join now and create a simple cross product
 		// now create the duplicate eliminated scan for this node
+		auto left_columns = plan->GetColumnBindings().size();
 		auto delim_index = binder.GenerateTableIndex();
 		this->base_binding = ColumnBinding(delim_index, 0);
+		this->delim_offset = 0;
+		this->data_offset = left_columns;
 		auto delim_scan = make_unique<LogicalDelimGet>(delim_index, delim_types);
-		return LogicalCrossProduct::Create(move(delim_scan), move(plan));
+		return LogicalCrossProduct::Create(move(plan), move(delim_scan));
 	}
 	switch (plan->type) {
 	case LogicalOperatorType::LOGICAL_UNNEST:
@@ -162,7 +165,7 @@ unique_ptr<LogicalOperator> FlattenDependentJoins::PushDownDependentJoinInternal
 				vector<unique_ptr<Expression>> aggr_children;
 				aggr_children.push_back(move(colref));
 				auto first_fun = make_unique<BoundAggregateExpression>(move(first_aggregate), move(aggr_children),
-				                                                       nullptr, nullptr, false);
+				                                                       nullptr, nullptr, AggregateType::NON_DISTINCT);
 				aggr.expressions.push_back(move(first_fun));
 			}
 		} else {
@@ -445,17 +448,36 @@ unique_ptr<LogicalOperator> FlattenDependentJoins::PushDownDependentJoinInternal
 	case LogicalOperatorType::LOGICAL_UNION: {
 		auto &setop = (LogicalSetOperation &)*plan;
 		// set operator, push into both children
+#ifdef DEBUG
+		plan->children[0]->ResolveOperatorTypes();
+		plan->children[1]->ResolveOperatorTypes();
+		D_ASSERT(plan->children[0]->types == plan->children[1]->types);
+#endif
 		plan->children[0] = PushDownDependentJoin(move(plan->children[0]));
 		plan->children[1] = PushDownDependentJoin(move(plan->children[1]));
+#ifdef DEBUG
+		D_ASSERT(plan->children[0]->GetColumnBindings().size() == plan->children[1]->GetColumnBindings().size());
+		plan->children[0]->ResolveOperatorTypes();
+		plan->children[1]->ResolveOperatorTypes();
+		D_ASSERT(plan->children[0]->types == plan->children[1]->types);
+#endif
 		// we have to refer to the setop index now
 		base_binding.table_index = setop.table_index;
 		base_binding.column_index = setop.column_count;
 		setop.column_count += correlated_columns.size();
 		return plan;
 	}
-	case LogicalOperatorType::LOGICAL_DISTINCT:
-		plan->children[0] = PushDownDependentJoin(move(plan->children[0]));
+	case LogicalOperatorType::LOGICAL_DISTINCT: {
+		auto &distinct = (LogicalDistinct &)*plan;
+		// push down into child
+		distinct.children[0] = PushDownDependentJoin(move(distinct.children[0]));
+		// add all correlated columns to the distinct targets
+		for (idx_t i = 0; i < correlated_columns.size(); i++) {
+			distinct.distinct_targets.push_back(make_unique<BoundColumnRefExpression>(
+			    correlated_columns[i].type, ColumnBinding(base_binding.table_index, base_binding.column_index + i)));
+		}
 		return plan;
+	}
 	case LogicalOperatorType::LOGICAL_EXPRESSION_GET: {
 		// expression get
 		// first we flatten the dependent join in the child

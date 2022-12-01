@@ -30,7 +30,7 @@ idx_t Node48::GetChildGreaterEqual(uint8_t k, bool &equal) {
 			return pos;
 		}
 	}
-	return Node::GetChildGreaterEqual(k, equal);
+	return DConstants::INVALID_INDEX;
 }
 
 idx_t Node48::GetMin() {
@@ -67,10 +67,10 @@ void Node48::InsertChild(Node *&node, uint8_t key_byte, Node *new_child) {
 	if (node->count < 48) {
 		// Insert element
 		idx_t pos = n->count;
-		if (n->children[pos].pointer) {
+		if (n->children[pos]) {
 			// find an empty position in the node list if the current position is occupied
 			pos = 0;
-			while (n->children[pos].pointer) {
+			while (n->children[pos]) {
 				pos++;
 			}
 		}
@@ -79,7 +79,7 @@ void Node48::InsertChild(Node *&node, uint8_t key_byte, Node *new_child) {
 		n->count++;
 	} else {
 		// Grow to Node256
-		auto new_node = new Node256();
+		auto new_node = Node256::New();
 		for (idx_t i = 0; i < 256; i++) {
 			if (n->child_index[i] != Node::EMPTY_MARKER) {
 				new_node->children[i] = n->children[n->child_index[i]];
@@ -88,7 +88,7 @@ void Node48::InsertChild(Node *&node, uint8_t key_byte, Node *new_child) {
 		}
 		new_node->count = n->count;
 		new_node->prefix = move(n->prefix);
-		delete node;
+		Node::Delete(node);
 		node = new_node;
 		Node256::InsertChild(node, key_byte, new_child);
 	}
@@ -100,7 +100,7 @@ void Node48::EraseChild(Node *&node, int pos, ART &art) {
 	n->child_index[pos] = Node::EMPTY_MARKER;
 	n->count--;
 	if (node->count <= 12) {
-		auto new_node = new Node16();
+		auto new_node = Node16::New();
 		new_node->prefix = move(n->prefix);
 		for (idx_t i = 0; i < 256; i++) {
 			if (n->child_index[i] != Node::EMPTY_MARKER) {
@@ -109,12 +109,12 @@ void Node48::EraseChild(Node *&node, int pos, ART &art) {
 				n->children[n->child_index[i]] = nullptr;
 			}
 		}
-		delete node;
+		Node::Delete(node);
 		node = new_node;
 	}
 }
 
-void Node48::Merge(MergeInfo &info, idx_t depth, Node *&l_parent, idx_t l_pos) {
+bool Node48::Merge(MergeInfo &info, idx_t depth, Node *&l_parent, idx_t l_pos) {
 
 	Node48 *r_n = (Node48 *)info.r_node;
 
@@ -123,9 +123,12 @@ void Node48::Merge(MergeInfo &info, idx_t depth, Node *&l_parent, idx_t l_pos) {
 
 			auto l_child_pos = info.l_node->GetChildPos(i);
 			auto key_byte = (uint8_t)i;
-			Node::MergeAtByte(info, depth, l_child_pos, i, key_byte, l_parent, l_pos);
+			if (!Node::MergeAtByte(info, depth, l_child_pos, i, key_byte, l_parent, l_pos)) {
+				return false;
+			}
 		}
 	}
+	return true;
 }
 
 idx_t Node48::GetSize() {

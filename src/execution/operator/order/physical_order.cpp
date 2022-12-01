@@ -32,13 +32,14 @@ public:
 
 class OrderLocalState : public LocalSinkState {
 public:
-	OrderLocalState(Allocator &allocator, const PhysicalOrder &op) : key_executor(allocator) {
+	OrderLocalState(ClientContext &context, const PhysicalOrder &op) : key_executor(context) {
 		// Initialize order clause expression executor and DataChunk
 		vector<LogicalType> key_types;
 		for (auto &order : op.orders) {
 			key_types.push_back(order.expression->return_type);
 			key_executor.AddExpression(*order.expression);
 		}
+		auto &allocator = Allocator::Get(context);
 		keys.Initialize(allocator, key_types);
 		payload.Initialize(allocator, op.types);
 	}
@@ -65,7 +66,7 @@ unique_ptr<GlobalSinkState> PhysicalOrder::GetGlobalSinkState(ClientContext &con
 }
 
 unique_ptr<LocalSinkState> PhysicalOrder::GetLocalSinkState(ExecutionContext &context) const {
-	return make_unique<OrderLocalState>(Allocator::Get(context.client), *this);
+	return make_unique<OrderLocalState>(context.client, *this);
 }
 
 SinkResultType PhysicalOrder::Sink(ExecutionContext &context, GlobalSinkState &gstate_p, LocalSinkState &lstate_p,
@@ -87,11 +88,7 @@ SinkResultType PhysicalOrder::Sink(ExecutionContext &context, GlobalSinkState &g
 	lstate.key_executor.Execute(input, keys);
 
 	auto &payload = lstate.payload;
-	payload.Reset();
-	for (idx_t col_idx = 0; col_idx < projections.size(); col_idx++) {
-		payload.data[col_idx].Reference(input.data[projections[col_idx]]);
-	}
-	payload.SetCardinality(input.size());
+	payload.ReferenceColumns(input, projections);
 
 	// Sink the data into the local sort state
 	keys.Verify();

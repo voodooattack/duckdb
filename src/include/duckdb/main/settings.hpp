@@ -60,14 +60,6 @@ struct DebugForceNoCrossProduct {
 	static Value GetSetting(ClientContext &context);
 };
 
-struct DebugManyFreeListBlocks {
-	static constexpr const char *Name = "debug_many_free_list_blocks";
-	static constexpr const char *Description = "DEBUG SETTING: add additional blocks to the free list";
-	static constexpr const LogicalTypeId InputType = LogicalTypeId::BOOLEAN;
-	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
-	static Value GetSetting(ClientContext &context);
-};
-
 struct DebugWindowMode {
 	static constexpr const char *Name = "debug_window_mode";
 	static constexpr const char *Description = "DEBUG SETTING: switch window mode to use";
@@ -162,6 +154,14 @@ struct EnableProgressBarSetting {
 	static Value GetSetting(ClientContext &context);
 };
 
+struct ExperimentalParallelCSVSetting {
+	static constexpr const char *Name = "experimental_parallel_csv";
+	static constexpr const char *Description = "Whether or not to use the experimental parallel CSV reader";
+	static constexpr const LogicalTypeId InputType = LogicalTypeId::BOOLEAN;
+	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
+	static Value GetSetting(ClientContext &context);
+};
+
 struct ExplainOutputSetting {
 	static constexpr const char *Name = "explain_output";
 	static constexpr const char *Description = "Output of EXPLAIN statements (ALL, OPTIMIZED_ONLY, PHYSICAL_ONLY)";
@@ -224,6 +224,14 @@ struct MaximumExpressionDepthSetting {
 struct MaximumMemorySetting {
 	static constexpr const char *Name = "max_memory";
 	static constexpr const char *Description = "The maximum memory of the system (e.g. 1GB)";
+	static constexpr const LogicalTypeId InputType = LogicalTypeId::VARCHAR;
+	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
+	static Value GetSetting(ClientContext &context);
+};
+
+struct PasswordSetting {
+	static constexpr const char *Name = "password";
+	static constexpr const char *Description = "The password to use. Ignored for legacy compatibility.";
 	static constexpr const LogicalTypeId InputType = LogicalTypeId::VARCHAR;
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static Value GetSetting(ClientContext &context);
@@ -320,6 +328,14 @@ struct ThreadsSetting {
 	static constexpr const char *Name = "threads";
 	static constexpr const char *Description = "The number of total threads used by the system.";
 	static constexpr const LogicalTypeId InputType = LogicalTypeId::BIGINT;
+	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
+	static Value GetSetting(ClientContext &context);
+};
+
+struct UsernameSetting {
+	static constexpr const char *Name = "username";
+	static constexpr const char *Description = "The username to use. Ignored for legacy compatibility.";
+	static constexpr const LogicalTypeId InputType = LogicalTypeId::VARCHAR;
 	static void SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &parameter);
 	static Value GetSetting(ClientContext &context);
 };

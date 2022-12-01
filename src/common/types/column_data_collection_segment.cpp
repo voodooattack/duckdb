@@ -4,7 +4,7 @@ namespace duckdb {
 
 ColumnDataCollectionSegment::ColumnDataCollectionSegment(shared_ptr<ColumnDataAllocator> allocator_p,
                                                          vector<LogicalType> types_p)
-    : allocator(move(allocator_p)), types(move(types_p)), count(0) {
+    : allocator(move(allocator_p)), types(move(types_p)), count(0), heap(allocator->GetAllocator()) {
 }
 
 idx_t ColumnDataCollectionSegment::GetDataSize(idx_t type_size) {
@@ -214,7 +214,6 @@ void ColumnDataCollectionSegment::FetchChunk(idx_t chunk_idx, DataChunk &result)
 void ColumnDataCollectionSegment::FetchChunk(idx_t chunk_idx, DataChunk &result, const vector<column_t> &column_ids) {
 	D_ASSERT(chunk_idx < chunk_data.size());
 	ChunkManagementState state;
-	InitializeChunkState(chunk_idx, state);
 	state.properties = ColumnDataScanProperties::DISALLOW_ZERO_COPY;
 	ReadChunk(chunk_idx, state, result, column_ids);
 }

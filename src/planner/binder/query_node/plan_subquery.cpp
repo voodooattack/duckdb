@@ -33,7 +33,8 @@ static unique_ptr<Expression> PlanUncorrelatedSubquery(Binder &binder, BoundSubq
 		auto count_star_fun = CountStarFun::GetFunction();
 
 		FunctionBinder function_binder(binder.context);
-		auto count_star = function_binder.BindAggregateFunction(count_star_fun, {}, nullptr, false);
+		auto count_star =
+		    function_binder.BindAggregateFunction(count_star_fun, {}, nullptr, AggregateType::NON_DISTINCT);
 		auto idx_type = count_star->return_type;
 		vector<unique_ptr<Expression>> aggregate_list;
 		aggregate_list.push_back(move(count_star));
@@ -85,8 +86,8 @@ static unique_ptr<Expression> PlanUncorrelatedSubquery(Binder &binder, BoundSubq
 		first_children.push_back(move(bound));
 
 		FunctionBinder function_binder(binder.context);
-		auto first_agg = function_binder.BindAggregateFunction(FirstFun::GetFunction(expr.return_type),
-		                                                       move(first_children), nullptr, false);
+		auto first_agg = function_binder.BindAggregateFunction(
+		    FirstFun::GetFunction(expr.return_type), move(first_children), nullptr, AggregateType::NON_DISTINCT);
 
 		expressions.push_back(move(first_agg));
 		auto aggr_index = binder.GenerateTableIndex();
@@ -352,7 +353,7 @@ unique_ptr<Expression> Binder::PlanSubquery(BoundSubqueryExpression &expr, uniqu
 	D_ASSERT(root);
 	// first we translate the QueryNode of the subquery into a logical plan
 	// note that we do not plan nested subqueries yet
-	auto sub_binder = Binder::CreateBinder(context);
+	auto sub_binder = Binder::CreateBinder(context, this);
 	sub_binder->plan_subquery = false;
 	auto subquery_root = sub_binder->CreatePlan(*expr.subquery);
 	D_ASSERT(subquery_root);

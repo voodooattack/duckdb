@@ -4,13 +4,14 @@
 
 namespace duckdb {
 
-ListColumnData::ListColumnData(DataTableInfo &info, idx_t column_index, idx_t start_row, LogicalType type_p,
-                               ColumnData *parent)
-    : ColumnData(info, column_index, start_row, move(type_p), parent), validity(info, 0, start_row, this) {
+ListColumnData::ListColumnData(BlockManager &block_manager, DataTableInfo &info, idx_t column_index, idx_t start_row,
+                               LogicalType type_p, ColumnData *parent)
+    : ColumnData(block_manager, info, column_index, start_row, move(type_p), parent),
+      validity(block_manager, info, 0, start_row, this) {
 	D_ASSERT(type.InternalType() == PhysicalType::LIST);
 	auto &child_type = ListType::GetChildType(type);
 	// the child column, with column index 1 (0 is the validity mask)
-	child_column = ColumnData::CreateColumnUnique(info, 1, start_row, child_type, this);
+	child_column = ColumnData::CreateColumnUnique(block_manager, info, 1, start_row, child_type, this);
 }
 
 ListColumnData::ListColumnData(ColumnData &original, idx_t start_row, ColumnData *parent)
@@ -321,8 +322,8 @@ void ListColumnData::CommitDropColumn() {
 }
 
 struct ListColumnCheckpointState : public ColumnCheckpointState {
-	ListColumnCheckpointState(RowGroup &row_group, ColumnData &column_data, TableDataWriter &writer)
-	    : ColumnCheckpointState(row_group, column_data, writer) {
+	ListColumnCheckpointState(RowGroup &row_group, ColumnData &column_data, PartialBlockManager &partial_block_manager)
+	    : ColumnCheckpointState(row_group, column_data, partial_block_manager) {
 		global_stats = make_unique<ListStatistics>(column_data.type);
 	}
 
@@ -338,22 +339,29 @@ public:
 		return stats;
 	}
 
-	void FlushToDisk() override {
-		ColumnCheckpointState::FlushToDisk();
-		validity_state->FlushToDisk();
-		child_state->FlushToDisk();
+	void WriteDataPointers(RowGroupWriter &writer) override {
+		ColumnCheckpointState::WriteDataPointers(writer);
+		validity_state->WriteDataPointers(writer);
+		child_state->WriteDataPointers(writer);
+	}
+	void GetBlockIds(unordered_set<block_id_t> &result) override {
+		ColumnCheckpointState::GetBlockIds(result);
+		validity_state->GetBlockIds(result);
+		child_state->GetBlockIds(result);
 	}
 };
 
-unique_ptr<ColumnCheckpointState> ListColumnData::CreateCheckpointState(RowGroup &row_group, TableDataWriter &writer) {
-	return make_unique<ListColumnCheckpointState>(row_group, *this, writer);
+unique_ptr<ColumnCheckpointState> ListColumnData::CreateCheckpointState(RowGroup &row_group,
+                                                                        PartialBlockManager &partial_block_manager) {
+	return make_unique<ListColumnCheckpointState>(row_group, *this, partial_block_manager);
 }
 
-unique_ptr<ColumnCheckpointState> ListColumnData::Checkpoint(RowGroup &row_group, TableDataWriter &writer,
+unique_ptr<ColumnCheckpointState> ListColumnData::Checkpoint(RowGroup &row_group,
+                                                             PartialBlockManager &partial_block_manager,
                                                              ColumnCheckpointInfo &checkpoint_info) {
-	auto validity_state = validity.Checkpoint(row_group, writer, checkpoint_info);
-	auto base_state = ColumnData::Checkpoint(row_group, writer, checkpoint_info);
-	auto child_state = child_column->Checkpoint(row_group, writer, checkpoint_info);
+	auto validity_state = validity.Checkpoint(row_group, partial_block_manager, checkpoint_info);
+	auto base_state = ColumnData::Checkpoint(row_group, partial_block_manager, checkpoint_info);
+	auto child_state = child_column->Checkpoint(row_group, partial_block_manager, checkpoint_info);
 
 	auto &checkpoint_state = (ListColumnCheckpointState &)*base_state;
 	checkpoint_state.validity_state = move(validity_state);

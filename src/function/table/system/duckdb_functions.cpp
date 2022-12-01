@@ -58,6 +58,9 @@ static unique_ptr<FunctionData> DuckDBFunctionsBind(ClientContext &context, Tabl
 	names.emplace_back("has_side_effects");
 	return_types.emplace_back(LogicalType::BOOLEAN);
 
+	names.emplace_back("function_oid");
+	return_types.emplace_back(LogicalType::BIGINT);
+
 	return nullptr;
 }
 
@@ -79,7 +82,7 @@ unique_ptr<GlobalTableFunctionState> DuckDBFunctionsInit(ClientContext &context,
 	for (auto &schema : schemas) {
 		ExtractFunctionsFromSchema(context, *schema, *result);
 	};
-	ExtractFunctionsFromSchema(context, *ClientData::Get(context).temporary_objects, *result);
+	ExtractFunctionsFromSchema(context, *SchemaCatalogEntry::GetTemporaryObjects(context), *result);
 
 	std::sort(result->entries.begin(), result->entries.end(),
 	          [&](CatalogEntry *a, CatalogEntry *b) { return (int)a->type < (int)b->type; });
@@ -443,6 +446,9 @@ bool ExtractFunctionData(StandardEntry *entry, idx_t function_idx, DataChunk &ou
 
 	// has_side_effects, LogicalType::BOOLEAN
 	output.SetValue(9, output_offset, OP::HasSideEffects(function, function_idx));
+
+	// function_oid, LogicalType::BIGINT
+	output.SetValue(10, output_offset, Value::BIGINT(entry->oid));
 
 	return function_idx + 1 == OP::FunctionCount(function);
 }

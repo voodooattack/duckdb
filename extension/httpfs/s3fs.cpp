@@ -717,6 +717,11 @@ void S3FileSystem::Verify() {
 		throw std::runtime_error("test3 fail");
 	}
 
+	// bug #4082
+	S3AuthParams auth_params4 = {
+	    "auto", "asdf", "asdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdfasdf", "", "", "", true};
+	create_s3_header("/", "", "exampple.com", "s3", "GET", auth_params4);
+
 	if (UrlEncode("/category=Books/") != "/category%3DBooks/") {
 		throw std::runtime_error("test fail");
 	}
@@ -907,7 +912,7 @@ string AWSListObjectV2::Request(string &path, HTTPParams &http_params, S3AuthPar
 
 	string req_params = "";
 	if (!continuation_token.empty()) {
-		req_params += "continuation-token=" + S3FileSystem::UrlEncode(continuation_token);
+		req_params += "continuation-token=" + S3FileSystem::UrlEncode(continuation_token, true);
 		req_params += "&";
 	}
 	req_params += "encoding-type=url&list-type=2";

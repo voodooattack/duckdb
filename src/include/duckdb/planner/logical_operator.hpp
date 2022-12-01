@@ -77,9 +77,14 @@ public:
 
 	static unique_ptr<LogicalOperator> Deserialize(Deserializer &deserializer, PlanDeserializationState &state);
 
+	virtual unique_ptr<LogicalOperator> Copy(ClientContext &context) const;
+
 	virtual bool RequireOptimizer() const {
 		return true;
 	}
+
+	//! Returns the set of table indexes of this operator
+	virtual vector<idx_t> GetTableIndex() const;
 
 protected:
 	//! Resolve types for this specific operator

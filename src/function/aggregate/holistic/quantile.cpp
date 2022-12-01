@@ -15,13 +15,13 @@
 namespace duckdb {
 
 // Hugeint arithmetic
-hugeint_t operator*(const hugeint_t &h, const double &d) {
+static hugeint_t operator*(const hugeint_t &h, const double &d) {
 	D_ASSERT(d >= 0 && d <= 1);
 	return Hugeint::Convert(Hugeint::Cast<double>(h) * d);
 }
 
 // Interval arithmetic
-interval_t operator*(const interval_t &i, const double &d) {
+static interval_t operator*(const interval_t &i, const double &d) {
 	D_ASSERT(d >= 0 && d <= 1);
 	return Interval::FromMicro(std::llround(Interval::GetMicro(i) * d));
 }
@@ -320,7 +320,8 @@ struct Interpolator {
 template <>
 struct Interpolator<true> {
 	Interpolator(const double q, const idx_t n_p)
-	    : n(n_p), RN((double)(n_p - 1) * q), FRN(floor(RN)), CRN(FRN), begin(0), end(n_p) {
+	    : n(n_p), RN((double)(n_p * q)), FRN(MaxValue<idx_t>(1, n_p - floor(n_p - RN)) - 1), CRN(FRN), begin(0),
+	      end(n_p) {
 	}
 
 	template <class INPUT_TYPE, class TARGET_TYPE, typename ACCESSOR = QuantileDirect<INPUT_TYPE>>
@@ -1151,7 +1152,7 @@ unique_ptr<FunctionData> BindQuantile(ClientContext &context, AggregateFunction 
 	if (!arguments[1]->IsFoldable()) {
 		throw BinderException("QUANTILE can only take constant parameters");
 	}
-	Value quantile_val = ExpressionExecutor::EvaluateScalar(*arguments[1]);
+	Value quantile_val = ExpressionExecutor::EvaluateScalar(context, *arguments[1]);
 	vector<double> quantiles;
 	if (quantile_val.type().id() != LogicalTypeId::LIST) {
 		quantiles.push_back(CheckQuantile(quantile_val));

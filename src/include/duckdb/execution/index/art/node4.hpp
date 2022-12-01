@@ -15,10 +15,13 @@ namespace duckdb {
 class Node4 : public Node {
 public:
 	Node4();
+
 	uint8_t key[4];
-	SwizzleablePointer children[4];
+	// Pointers to the child nodes
+	ARTPointer children[4];
 
 public:
+	static Node4 *New();
 	//! Get position of a byte, returns DConstants::INVALID_INDEX if not exists
 	idx_t GetChildPos(uint8_t k) override;
 	//! Get the position of the first child that is greater or equal to the specific byte, or DConstants::INVALID_INDEX
@@ -38,7 +41,7 @@ public:
 	//! Erase the child at pos and (if necessary) merge with last child
 	static void EraseChild(Node *&node, int pos, ART &art);
 	//! Merge Node4 into l_node
-	static void Merge(MergeInfo &info, idx_t depth, Node *&l_parent, idx_t l_pos);
+	static bool Merge(MergeInfo &info, idx_t depth, Node *&l_parent, idx_t l_pos);
 	//! Returns the size (maximum capacity) of the Node4
 	static idx_t GetSize();
 };

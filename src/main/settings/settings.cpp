@@ -104,18 +104,6 @@ Value DebugForceNoCrossProduct::GetSetting(ClientContext &context) {
 }
 
 //===--------------------------------------------------------------------===//
-// Debug Many Free List blocks
-//===--------------------------------------------------------------------===//
-void DebugManyFreeListBlocks::SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &input) {
-	config.options.debug_many_free_list_blocks = input.GetValue<bool>();
-}
-
-Value DebugManyFreeListBlocks::GetSetting(ClientContext &context) {
-	auto &config = DBConfig::GetConfig(context);
-	return Value::BOOLEAN(config.options.debug_many_free_list_blocks);
-}
-
-//===--------------------------------------------------------------------===//
 // Debug Window Mode
 //===--------------------------------------------------------------------===//
 void DebugWindowMode::SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &input) {
@@ -348,6 +336,18 @@ Value EnableProgressBarSetting::GetSetting(ClientContext &context) {
 }
 
 //===--------------------------------------------------------------------===//
+// Experimental Parallel CSV
+//===--------------------------------------------------------------------===//
+void ExperimentalParallelCSVSetting::SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &input) {
+	config.options.experimental_parallel_csv_reader = input.GetValue<bool>();
+}
+
+Value ExperimentalParallelCSVSetting::GetSetting(ClientContext &context) {
+	auto &config = DBConfig::GetConfig(context);
+	return Value::BIGINT(config.options.experimental_parallel_csv_reader);
+}
+
+//===--------------------------------------------------------------------===//
 // Explain Output
 //===--------------------------------------------------------------------===//
 void ExplainOutputSetting::SetLocal(ClientContext &context, const Value &input) {
@@ -482,6 +482,17 @@ void MaximumMemorySetting::SetGlobal(DatabaseInstance *db, DBConfig &config, con
 Value MaximumMemorySetting::GetSetting(ClientContext &context) {
 	auto &config = DBConfig::GetConfig(context);
 	return Value(StringUtil::BytesToHumanReadableString(config.options.maximum_memory));
+}
+
+//===--------------------------------------------------------------------===//
+// Password Setting
+//===--------------------------------------------------------------------===//
+void PasswordSetting::SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &input) {
+	// nop
+}
+
+Value PasswordSetting::GetSetting(ClientContext &context) {
+	return Value();
 }
 
 //===--------------------------------------------------------------------===//
@@ -648,6 +659,17 @@ void ThreadsSetting::SetGlobal(DatabaseInstance *db, DBConfig &config, const Val
 Value ThreadsSetting::GetSetting(ClientContext &context) {
 	auto &config = DBConfig::GetConfig(context);
 	return Value::BIGINT(config.options.maximum_threads);
+}
+
+//===--------------------------------------------------------------------===//
+// Username Setting
+//===--------------------------------------------------------------------===//
+void UsernameSetting::SetGlobal(DatabaseInstance *db, DBConfig &config, const Value &input) {
+	// nop
+}
+
+Value UsernameSetting::GetSetting(ClientContext &context) {
+	return Value();
 }
 
 } // namespace duckdb
