@@ -1,89 +1,167 @@
 #pragma once
-
-#include <optional>
+#include <stddef.h>
+#include <type_traits>
+#include <utility>
+#include <iterator>
+#include <string_view>
 
 #include "duckdb.hpp"
 
 namespace duckdb {
 
-class ValueReader {
+class VectorReader;
+
+class VectorHolder {
+	friend class VectorReader;
+
 public:
-	ValueReader(const Value &value) noexcept : value(value) {
+	VectorHolder(Vector &vec, idx_t count);
+	explicit VectorHolder(void *ptr) noexcept;
+	explicit VectorHolder(const std::string_view &s) noexcept : VectorHolder(string_t(s.data(), s.size())) {
 	}
 
-	bool IsNull() const;
-	bool GetBool() const;
-	std::optional<int64_t> GetInt() const;
-	std::optional<uint64_t> GetUInt() const;
-	double GetReal() const;
-	const string &GetString() const;
-	string GetDecimal() const;
-	string GetUUID() const;
-	string GetEnum() const;
-	string GetDate() const;
-	string GetTime() const;
-	string GetTimestamp() const;
-	string GetDatetime() const;
-	const interval_t &GetInterval() const;
-	ValueReader operator[](idx_t index) const;
-	size_t ListSize() const;
+	template <typename T>
+	explicit VectorHolder(const T &value) noexcept : VectorHolder((void *)&value) {
+	}
 
-	class ListIterator {
-	public:
-		using iterator = ListIterator;
-		using iterator_category = std::input_iterator_tag;
-		using difference_type = std::ptrdiff_t;
-		using value_type = ValueReader;
-		using pointer = value_type *;
-		using reference = value_type;
-		using wrapped_iter = vector<Value>::const_iterator;
-		// clang-format off
-		explicit ListIterator(wrapped_iter it) : it(it) {}
-		iterator &operator++() { ++it; return *this; }
-		iterator operator++(int) { iterator retval = *this; ++(*this); return retval; }
-		bool operator==(iterator other) const { return it == other.it; }
-		bool operator!=(iterator other) const { return !(*this == other); }
-		reference operator*() const { return ValueReader(*it); }
-		// clang-format on
-	private:
-		wrapped_iter it;
-	};
-	ListIterator begin() const;
-	ListIterator end() const;
+	VectorHolder(VectorHolder &&) noexcept = default;
+	VectorHolder &operator=(VectorHolder &&) noexcept = default;
+
+	VectorReader operator[](idx_t index) const noexcept;
 
 private:
-	const Value &value;
+	UnifiedVectorFormat data;
+	vector<VectorHolder> child_data;
 };
 
-class ValueWriter {
+class VectorReader {
+	class ListIterator;
+
 public:
-	ValueWriter(Value &value) noexcept : value(value) {
+	VectorReader(const VectorHolder &holder, idx_t i_row) noexcept;
+	VectorReader(const VectorHolder &holder) noexcept : holder(holder) {
+	}
+
+	template <typename T>
+	const T &Get() const noexcept {
+		return reinterpret_cast<const T *>(holder.data.data)[i_row];
+	}
+
+	bool IsNull() const noexcept;
+	std::string_view GetString() const noexcept;
+	VectorReader operator[](idx_t index) const noexcept;
+	uint64_t ListSize() const noexcept;
+	ListIterator begin() const noexcept;
+	idx_t end() const noexcept;
+	VectorReader &operator++() noexcept;
+	void SetRow(idx_t index) noexcept;
+
+private:
+	const VectorHolder &holder;
+	idx_t i_row;
+	idx_t i_sel_row;
+};
+
+class VectorReader::ListIterator {
+public:
+	using iterator = ListIterator;
+	using iterator_category = std::input_iterator_tag;
+	using difference_type = ptrdiff_t;
+	using value_type = VectorReader;
+	using reference = const value_type &;
+	using pointer = const value_type *;
+	// clang-format off
+	ListIterator(const VectorHolder &holder, idx_t i_row) noexcept : reader(holder, i_row) {}
+	iterator &operator++() noexcept { ++reader; return *this; }
+	iterator operator++(int) noexcept { iterator retval = *this; ++(*this); return retval; }
+	bool operator==(idx_t end) const noexcept { return reader.i_sel_row == end; }
+	bool operator!=(idx_t end) const noexcept { return reader.i_sel_row != end; }
+	reference operator*() const noexcept { return reader; }
+	// clang-format on
+private:
+	VectorReader reader;
+};
+
+class VectorListWriter;
+class VectorStructWriter;
+
+class VectorWriter {
+public:
+	VectorWriter(Vector &vec, idx_t i_row) noexcept : vec(vec), i_row(i_row) {
+		D_ASSERT(vec.GetVectorType() == VectorType::FLAT_VECTOR);
 	}
 
 	void SetNull();
-	void SetBool(bool v);
-	void SetInt32(int32_t v);
-	void SetInt64(int64_t v);
-	void SetDouble(double v);
-	void SetNumeric(const hugeint_t &v);
-	void SetInterval(const interval_t &v);
-	void SetString(string &&str);
-	void SetList();
-	ValueWriter ListAppend();
-	void SetStruct();
-	ValueWriter operator[](idx_t index);
+	void SetString(string_t data);
+	VectorListWriter SetList() noexcept;
+	VectorStructWriter SetStruct() noexcept;
+
+	template <typename T>
+	void Set(const T &v) noexcept {
+		D_ASSERT(vec.GetType().InternalType() == GetTypeId<T>());
+		FlatVector::GetData<T>(vec)[i_row] = v;
+	}
 
 private:
-	void SetNotNull();
-
-private:
-	Value &value;
+	Vector &vec;
+	idx_t i_row;
 };
 
-typedef std::function<bool(ValueWriter &, const ValueReader &)> value_unary_func;
-void VectorExecuteUnary(DataChunk &args, Vector &result, value_unary_func func);
+class VectorListWriter {
+public:
+	VectorListWriter(VectorListBuffer &buffer, list_entry_t &entry) noexcept;
+	~VectorListWriter();
 
-typedef std::function<bool(ValueWriter &, const ValueReader &, const ValueReader &)> value_binary_func;
-void VectorExecuteBinary(DataChunk &args, Vector &result, value_binary_func func);
+	VectorWriter Append();
+
+private:
+	VectorListBuffer &buffer;
+	list_entry_t &entry;
+};
+
+class VectorStructWriter {
+public:
+	VectorStructWriter(vector<unique_ptr<Vector>> &children, idx_t i_row) noexcept : children(children), i_row(i_row) {
+	}
+
+	VectorWriter operator[](idx_t index) noexcept;
+
+private:
+	vector<unique_ptr<Vector>> &children;
+	idx_t i_row;
+};
+
+template <bool CHECK_NULL, typename FUNC, size_t... IDXS>
+void VectorExecuteImpl(DataChunk &args, Vector &result, FUNC &&func, std::index_sequence<IDXS...>) {
+	constexpr size_t N_ARG = sizeof...(IDXS);
+	D_ASSERT(args.ColumnCount() == N_ARG);
+	bool constant = (... && (args.data[IDXS].GetVectorType() == VectorType::CONSTANT_VECTOR));
+	idx_t size = constant ? 1 : args.size();
+	VectorHolder holders[N_ARG] = {{args.data[IDXS], size}...};
+	VectorReader readers[N_ARG] = {{holders[IDXS]}...};
+	for (idx_t i_row = 0; i_row < size; ++i_row) {
+		(... , readers[IDXS].SetRow(i_row));
+		VectorWriter writer(result, i_row);
+		if (CHECK_NULL && (... || readers[IDXS].IsNull()) || !func(writer, readers[IDXS]...)) {
+			writer.SetNull();
+		}
+	}
+	if (constant) {
+		result.SetVectorType(VectorType::CONSTANT_VECTOR);
+	}
+}
+
+template <bool CHECK_NULL = true, typename... ARGS>
+void VectorExecute(DataChunk &args, Vector &result, bool(*func)(VectorWriter &, ARGS...)) {
+	VectorExecuteImpl<CHECK_NULL>(args, result, func, std::index_sequence_for<ARGS...>{});
+}
+
+template <bool CHECK_NULL = true, class T, typename... ARGS>
+void VectorExecute(DataChunk &args, Vector &result, T &&instance,
+	               bool(std::remove_reference_t<T>::*method)(VectorWriter &, ARGS...)) {
+	VectorExecuteImpl<CHECK_NULL>(
+	    args, result, [&](auto &&...args) { return (instance.*method)(std::forward<decltype(args)>(args)...); },
+	    std::index_sequence_for<ARGS...>{});
+}
 
 } // namespace duckdb

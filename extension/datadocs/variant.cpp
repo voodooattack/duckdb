@@ -3,10 +3,12 @@
 #include "duckdb.hpp"
 #ifndef DUCKDB_AMALGAMATION
 #include "duckdb/common/types/blob.hpp"
+#include "duckdb/common/types/decimal.hpp"
 #include "duckdb/common/types/date.hpp"
 #include "duckdb/common/types/time.hpp"
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/common/types/interval.hpp"
+#include "duckdb/common/types/uuid.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 #endif
 #include "fmt/format.h"
@@ -45,27 +47,71 @@ public:
 			write_func = &VariantWriter::WriteBool;
 			break;
 		case LogicalTypeId::TINYINT:
+			type_name = is_list ? "INT64[]" : "INT64";
+			write_func = &VariantWriter::WriteInt<int8_t>;
+			break;
 		case LogicalTypeId::SMALLINT:
+			type_name = is_list ? "INT64[]" : "INT64";
+			write_func = &VariantWriter::WriteInt<int16_t>;
+			break;
 		case LogicalTypeId::INTEGER:
+			type_name = is_list ? "INT64[]" : "INT64";
+			write_func = &VariantWriter::WriteInt<int32_t>;
+			break;
 		case LogicalTypeId::BIGINT:
+			type_name = is_list ? "INT64[]" : "INT64";
+			write_func = &VariantWriter::WriteInt<int64_t>;
+			break;
 		case LogicalTypeId::UTINYINT:
+			type_name = is_list ? "INT64[]" : "INT64";
+			write_func = &VariantWriter::WriteInt<uint8_t>;
+			break;
 		case LogicalTypeId::USMALLINT:
+			type_name = is_list ? "INT64[]" : "INT64";
+			write_func = &VariantWriter::WriteInt<uint16_t>;
+			break;
 		case LogicalTypeId::UINTEGER:
+			type_name = is_list ? "INT64[]" : "INT64";
+			write_func = &VariantWriter::WriteInt<uint32_t>;
+			break;
 		case LogicalTypeId::UBIGINT:
+			type_name = is_list ? "INT64[]" : "INT64";
+			write_func = &VariantWriter::WriteUInt64;
+			break;
 		case LogicalTypeId::HUGEINT:
 			type_name = is_list ? "INT64[]" : "INT64";
-			write_func = &VariantWriter::WriteInt64;
+			write_func = &VariantWriter::WriteHugeInt;
 			break;
 		case LogicalTypeId::FLOAT:
+			type_name = is_list ? "FLOAT64[]" : "FLOAT64";
+			write_func = &VariantWriter::WriteFloat<float>;
+			break;
 		case LogicalTypeId::DOUBLE:
 			type_name = is_list ? "FLOAT64[]" : "FLOAT64";
-			write_func = &VariantWriter::WriteFloat64;
+			write_func = &VariantWriter::WriteFloat<double>;
 			break;
-		case LogicalTypeId::DECIMAL: {
+		case LogicalTypeId::DECIMAL:
 			type_name = is_list ? "NUMERIC[]" : "NUMERIC";
-			write_func = &VariantWriter::WriteNumeric;
+			switch (type->InternalType()) {
+			case PhysicalType::INT16:
+				write_func = &VariantWriter::WriteNumeric<int16_t>;
+				break;
+			case PhysicalType::INT32:
+				write_func = &VariantWriter::WriteNumeric<int32_t>;
+				break;
+			case PhysicalType::INT64:
+				write_func = &VariantWriter::WriteNumeric<int64_t>;
+				break;
+			case PhysicalType::INT128:
+				write_func = &VariantWriter::WriteNumeric<hugeint_t>;
+				break;
+			default:
+				D_ASSERT(false);
+				is_list = false;
+				write_func = &VariantWriter::WriteNull;
+				break;
+			}
 			break;
-		}
 		case LogicalTypeId::VARCHAR:
 			type_name = is_list ? "STRING[]" : "STRING";
 			write_func = &VariantWriter::WriteString;
@@ -80,7 +126,22 @@ public:
 			break;
 		case LogicalTypeId::ENUM:
 			type_name = is_list ? "STRING[]" : "STRING";
-			write_func = &VariantWriter::WriteEnum;
+			switch (type->InternalType()) {
+			case PhysicalType::UINT8:
+				write_func = &VariantWriter::WriteEnum<uint8_t>;
+				break;
+			case PhysicalType::UINT16:
+				write_func = &VariantWriter::WriteEnum<uint16_t>;
+				break;
+			case PhysicalType::UINT32:
+				write_func = &VariantWriter::WriteEnum<uint32_t>;
+				break;
+			default:
+				D_ASSERT(false);
+				is_list = false;
+				write_func = &VariantWriter::WriteNull;
+				break;
+			}
 			break;
 		case LogicalTypeId::DATE:
 			type_name = is_list ? "DATE[]" : "DATE";
@@ -92,11 +153,20 @@ public:
 			write_func = &VariantWriter::WriteTime;
 			break;
 		case LogicalTypeId::TIMESTAMP:
+			type_name = is_list ? "DATETIME[]" : "DATETIME";
+			write_func = &VariantWriter::WriteTimestamp;
+			break;
 		case LogicalTypeId::TIMESTAMP_SEC:
+			type_name = is_list ? "DATETIME[]" : "DATETIME";
+			write_func = &VariantWriter::WriteTimestamp<Timestamp::FromEpochSeconds>;
+			break;
 		case LogicalTypeId::TIMESTAMP_MS:
+			type_name = is_list ? "DATETIME[]" : "DATETIME";
+			write_func = &VariantWriter::WriteTimestamp<Timestamp::FromEpochMs>;
+			break;
 		case LogicalTypeId::TIMESTAMP_NS:
 			type_name = is_list ? "DATETIME[]" : "DATETIME";
-			write_func = &VariantWriter::WriteDatetime;
+			write_func = &VariantWriter::WriteTimestamp<Timestamp::FromEpochNanoSeconds>;
 			break;
 		case LogicalTypeId::TIMESTAMP_TZ:
 			type_name = is_list ? "TIMESTAMP[]" : "TIMESTAMP";
@@ -126,6 +196,10 @@ public:
 			type_name = is_list ? "STRUCT[]" : "STRUCT";
 			write_func = &VariantWriter::WriteMap;
 			break;
+		case LogicalTypeId::UNION:
+			type_name = is_list ? "JSON[]" : nullptr;
+			write_func = &VariantWriter::WriteUnion;
+			break;
 		default:
 			type_name = "UNKNOWN";
 			is_list = false;
@@ -134,28 +208,28 @@ public:
 		}
 	}
 
-	bool Process(ValueWriter &result, const ValueReader &arg) {
+	bool Process(VectorWriter &result, const VectorReader &arg) {
 		auto p_doc = JSONCommon::CreateDocument();
 		doc = *p_doc;
 		yyjson_mut_val *root = ProcessValue(arg);
 		if (yyjson_mut_is_null(root)) {
 			return false;
 		}
-		result.SetStruct();
-		result[0].SetString(type_name);
+		VectorStructWriter writer = result.SetStruct();
+		writer[0].SetString(type_name);
 		yyjson_mut_doc_set_root(doc, root);
 		size_t len;
 		unique_ptr<char, decltype(&free)> data(yyjson_mut_write(doc, 0, &len), free);
-		result[1].SetString(string(data.get(), len));
+		writer[1].SetString(string_t(data.get(), len));
 		return true;
 	}
 
 private:
-	yyjson_mut_val *ProcessValue(const ValueReader &arg) {
+	yyjson_mut_val *ProcessValue(const VectorReader &arg) {
 		yyjson_mut_val *root;
 		if (is_list) {
 			root = yyjson_mut_arr(doc);
-			for (ValueReader item : arg) {
+			for (const VectorReader &item : arg) {
 				if (item.IsNull()) {
 					yyjson_mut_arr_add_null(doc, root);
 				} else {
@@ -168,21 +242,37 @@ private:
 		return root;
 	}
 
-	yyjson_mut_val *WriteNull(const ValueReader &arg) {
+	yyjson_mut_val *WriteNull(const VectorReader &arg) {
 		return yyjson_mut_null(doc);
 	}
 
-	yyjson_mut_val *WriteBool(const ValueReader &arg) {
-		return yyjson_mut_bool(doc, arg.GetBool());
+	yyjson_mut_val *WriteBool(const VectorReader &arg) {
+		return yyjson_mut_bool(doc, arg.Get<bool>());
 	}
 
-	yyjson_mut_val *WriteInt64(const ValueReader &arg) {
-		auto val = arg.GetInt();
-		return val ? yyjson_mut_int(doc, *val) : yyjson_mut_null(doc);
+	template <typename T>
+	yyjson_mut_val *WriteInt(const VectorReader &arg) {
+		return yyjson_mut_int(doc, arg.Get<T>());
 	}
 
-	yyjson_mut_val *WriteFloat64(const ValueReader &arg) {
-		double val = arg.GetReal();
+	yyjson_mut_val *WriteUInt64(const VectorReader &arg) {
+		uint64_t val = arg.Get<uint64_t>();
+		return val <= std::numeric_limits<int64_t>::max() ? yyjson_mut_int(doc, (int64_t)val) : yyjson_mut_null(doc);
+	}
+
+	yyjson_mut_val *WriteHugeInt(const VectorReader &arg) {
+		hugeint_t val = arg.Get<hugeint_t>();
+		return val <= std::numeric_limits<int64_t>::max() && val >= std::numeric_limits<int64_t>::lowest()
+		           ? yyjson_mut_int(doc, (int64_t)val.lower)
+		           : yyjson_mut_null(doc);
+	}
+
+	template <typename T>
+	yyjson_mut_val *WriteFloat(const VectorReader &arg) {
+		return WriteDoubleImpl(arg.Get<T>());
+	}
+
+	yyjson_mut_val *WriteDoubleImpl(double val) {
 		if (std::isinf(val)) {
 			return yyjson_mut_str(doc, val < 0 ? "-Infinity" : "Infinity");
 		}
@@ -192,56 +282,71 @@ private:
 		return yyjson_mut_real(doc, val);
 	}
 
-	yyjson_mut_val *WriteNumeric(const ValueReader &arg) {
-		string val = arg.GetDecimal();
-		return yyjson_mut_strncpy(doc, val.data(), val.size());
+	template <typename T>
+	yyjson_mut_val *WriteNumeric(const VectorReader &arg) {
+		const T &val = arg.Get<T>();
+		uint8_t width, scale;
+		type->GetDecimalProperties(width, scale);
+		string s = Decimal::ToString(val, width, scale);
+		return yyjson_mut_strncpy(doc, s.data(), s.size());
 	}
 
-	yyjson_mut_val *WriteString(const ValueReader &arg) {
-		const string &val = arg.GetString();
+	yyjson_mut_val *WriteString(const VectorReader &arg) {
+		std::string_view val = arg.GetString();
 		return yyjson_mut_strn(doc, val.data(), val.size());
 	}
 
-	yyjson_mut_val *WriteBytes(const ValueReader &arg) {
-		string_t val(arg.GetString());
+	yyjson_mut_val *WriteBytes(const VectorReader &arg) {
+		string_t val = arg.Get<string_t>();
 		idx_t size = Blob::ToBase64Size(val);
 		string s(size, '\0');
 		Blob::ToBase64(val, s.data());
 		return yyjson_mut_strncpy(doc, s.data(), size);
 	}
 
-	yyjson_mut_val *WriteUUID(const ValueReader &arg) {
-		string val = arg.GetUUID();
-		return yyjson_mut_strncpy(doc, val.data(), val.size());
+	yyjson_mut_val *WriteUUID(const VectorReader &arg) {
+		char s[UUID::STRING_SIZE];
+		UUID::ToString(arg.Get<hugeint_t>(), s);
+		return yyjson_mut_strncpy(doc, s, UUID::STRING_SIZE);
 	}
 
-	yyjson_mut_val *WriteEnum(const ValueReader &arg) {
-		string val = arg.GetEnum();
-		return yyjson_mut_strncpy(doc, val.data(), val.size());
+	template <typename T>
+	yyjson_mut_val *WriteEnum(const VectorReader &arg) {
+		return WriteEnumImpl(arg.Get<T>());
 	}
 
-	yyjson_mut_val *WriteDate(const ValueReader &arg) {
-		string val = arg.GetDate();
-		return yyjson_mut_strncpy(doc, val.data(), val.size());
+	yyjson_mut_val *WriteEnumImpl(idx_t val) {
+		const Vector &enum_dictionary = EnumType::GetValuesInsertOrder(*type);
+		const string_t &s = FlatVector::GetData<string_t>(enum_dictionary)[val];
+		return yyjson_mut_strncpy(doc, s.GetDataUnsafe(), s.GetSize());
 	}
 
-	yyjson_mut_val *WriteTime(const ValueReader &arg) {
-		string val = arg.GetTime();
-		return yyjson_mut_strncpy(doc, val.data(), val.size());
+	yyjson_mut_val *WriteDate(const VectorReader &arg) {
+		string s = Date::ToString(arg.Get<date_t>());
+		return yyjson_mut_strncpy(doc, s.data(), s.size());
 	}
 
-	yyjson_mut_val *WriteTimestamp(const ValueReader &arg) {
-		string val = arg.GetTimestamp();
-		return yyjson_mut_strncpy(doc, val.data(), val.size());
+	yyjson_mut_val *WriteTime(const VectorReader &arg) {
+		string s = Time::ToString(arg.Get<dtime_t>());
+		return yyjson_mut_strncpy(doc, s.data(), s.size());
 	}
 
-	yyjson_mut_val *WriteDatetime(const ValueReader &arg) {
-		string val = arg.GetDatetime();
-		return yyjson_mut_strncpy(doc, val.data(), val.size());
+	yyjson_mut_val *WriteTimestamp(const VectorReader &arg) {
+		return WriteTimestampImpl(arg.Get<timestamp_t>());
 	}
 
-	yyjson_mut_val *WriteInterval(const ValueReader &arg) {
-		const interval_t &val = arg.GetInterval();
+	template <timestamp_t (*FUNC)(int64_t)>
+	yyjson_mut_val *WriteTimestamp(const VectorReader &arg) {
+		return WriteTimestampImpl(FUNC(arg.Get<timestamp_t>().value));
+	}
+
+	yyjson_mut_val *WriteTimestampImpl(const timestamp_t &ts) {
+		string s = Timestamp::ToString(ts);
+		return yyjson_mut_strncpy(doc, s.data(), s.size());
+	}
+
+	yyjson_mut_val *WriteInterval(const VectorReader &arg) {
+		const interval_t &val = arg.Get<interval_t>();
 		if (val.months < -10000 * 12 || val.months > 10000 * 12 || val.days < -3660000 || val.days > 3660000 ||
 		    val.micros < -87840000 * Interval::MICROS_PER_HOUR || val.micros > 87840000 * Interval::MICROS_PER_HOUR) {
 			return yyjson_mut_null(doc);
@@ -250,15 +355,15 @@ private:
 		return yyjson_mut_strncpy(doc, s.data(), s.size());
 	}
 
-	yyjson_mut_val *WriteJSON(const ValueReader &arg) {
-		auto arg_doc = JSONCommon::ReadDocument(arg.GetString());
+	yyjson_mut_val *WriteJSON(const VectorReader &arg) {
+		auto arg_doc = JSONCommon::ReadDocument(arg.Get<string_t>());
 		return yyjson_val_mut_copy(doc, yyjson_doc_get_root(*arg_doc));
 	}
 
-	yyjson_mut_val *WriteList(const ValueReader &arg) {
+	yyjson_mut_val *WriteList(const VectorReader &arg) {
 		yyjson_mut_val *obj = yyjson_mut_arr(doc);
 		idx_t i = 0;
-		for (ValueReader item : arg) {
+		for (const VectorReader &item : arg) {
 			if (item.IsNull()) {
 				yyjson_mut_arr_add_null(doc, obj);
 			} else {
@@ -268,12 +373,12 @@ private:
 		return obj;
 	}
 
-	yyjson_mut_val *WriteStruct(const ValueReader &arg) {
+	yyjson_mut_val *WriteStruct(const VectorReader &arg) {
 		yyjson_mut_val *obj = yyjson_mut_obj(doc);
 		idx_t i = 0;
 		for (auto &[child_key, child_type] : StructType::GetChildTypes(*type)) {
 			yyjson_mut_val *key = yyjson_mut_strn(doc, child_key.data(), child_key.size());
-			ValueReader item = arg[i++];
+			const VectorReader item = arg[i++];
 			yyjson_mut_val *val =
 			    item.IsNull() ? yyjson_mut_null(doc) : VariantWriter(child_type, doc).ProcessValue(item);
 			yyjson_mut_obj_put(obj, key, val);
@@ -281,29 +386,37 @@ private:
 		return obj;
 	}
 
-	yyjson_mut_val *WriteMap(const ValueReader &arg) {
+	yyjson_mut_val *WriteMap(const VectorReader &arg) {
 		auto &arg_types = StructType::GetChildTypes(*type);
 		if (ListType::GetChildType(arg_types[0].second).id() != LogicalTypeId::VARCHAR) {
 			return yyjson_mut_null(doc);
 		}
-		VariantWriter writer = VariantWriter(ListType::GetChildType(arg_types[1].second), doc);
+		VariantWriter writer(ListType::GetChildType(arg_types[1].second), doc);
 		yyjson_mut_val *obj = yyjson_mut_obj(doc);
-		auto it_keys = arg[0].begin();
-		auto it_values = arg[1].begin();
-		size_t size = arg[0].ListSize();
-		for (size_t i = 0; i < size; ++i) {
-			const string &child_key = (*it_keys++).GetString();
+		VectorReader arg_value = *arg[1].begin();
+		for (const VectorReader &arg_key : arg[0]) {
+			std::string_view child_key = arg_key.GetString();
 			yyjson_mut_val *key = yyjson_mut_strn(doc, child_key.data(), child_key.size());
-			ValueReader child_value = *it_values++;
-			yyjson_mut_val *val = child_value.IsNull() ? yyjson_mut_null(doc) : writer.ProcessValue(child_value);
+			yyjson_mut_val *val = arg_value.IsNull() ? yyjson_mut_null(doc) : writer.ProcessValue(arg_value);
 			yyjson_mut_obj_put(obj, key, val);
+			++arg_value;
 		}
 		return obj;
 	}
 
+	yyjson_mut_val *WriteUnion(const VectorReader &arg) {
+		union_tag_t tag = arg[0].Get<union_tag_t>();
+		VariantWriter writer(StructType::GetChildType(*type, tag + 1), doc);
+		yyjson_mut_val *val = writer.ProcessValue(arg[tag + 1]);
+		if (!type_name) {
+			type_name = writer.type_name;
+		}
+		return val;
+	}
+
 private:
 	yyjson_mut_doc *doc;
-	yyjson_mut_val *(VariantWriter::*write_func)(const ValueReader &) = nullptr;
+	yyjson_mut_val *(VariantWriter::*write_func)(const VectorReader &) = nullptr;
 	const char *type_name = nullptr;
 	bool is_list = false;
 	const LogicalType *type;
@@ -312,28 +425,28 @@ private:
 static void VariantFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	D_ASSERT(result.GetType() == DDVariantType);
 	VariantWriter writer(args.data[0].GetType());
-	VectorExecuteUnary(args, result, std::bind(&VariantWriter::Process, &writer, _1, _2));
+	VectorExecute(args, result, writer, &VariantWriter::Process);
 }
 
 class VariantReaderBase {
 public:
-	bool ProcessScalar(ValueWriter &result, const ValueReader &arg) {
-		auto doc = JSONCommon::ReadDocument(arg[1].GetString());
+	bool ProcessScalar(VectorWriter &result, const VectorReader &arg) {
+		auto doc = JSONCommon::ReadDocument(arg[1].Get<string_t>());
 		auto val = yyjson_doc_get_root(*doc);
 		return ReadScalar(result, val);
 	}
 
-	bool ProcessList(ValueWriter &result, const ValueReader &arg) {
-		auto doc = JSONCommon::ReadDocument(arg[1].GetString());
+	bool ProcessList(VectorWriter &result, const VectorReader &arg) {
+		auto doc = JSONCommon::ReadDocument(arg[1].Get<string_t>());
 		auto root = yyjson_doc_get_root(*doc);
 		yyjson_arr_iter iter;
 		if (!yyjson_arr_iter_init(root, &iter)) {
 			return false;
 		}
-		result.SetList();
+		VectorListWriter list_writer = result.SetList();
 		yyjson_val *val;
 		while (val = yyjson_arr_iter_next(&iter)) {
-			ValueWriter item = result.ListAppend();
+			VectorWriter item = list_writer.Append();
 			if (!ReadScalar(item, val)) {
 				item.SetNull();
 			}
@@ -341,23 +454,23 @@ public:
 		return true;
 	}
 
-	virtual bool ReadScalar(ValueWriter &result, yyjson_val *val) = 0;
+	virtual bool ReadScalar(VectorWriter &result, yyjson_val *val) = 0;
 };
 
 class VariantReaderBool : public VariantReaderBase {
 public:
-	bool ReadScalar(ValueWriter &result, yyjson_val *val) override {
+	bool ReadScalar(VectorWriter &result, yyjson_val *val) override {
 		if (!unsafe_yyjson_is_bool(val)) {
 			return false;
 		}
-		result.SetBool(unsafe_yyjson_get_bool(val));
+		result.Set(unsafe_yyjson_get_bool(val));
 		return true;
 	}
 };
 
 class VariantReaderInt64 : public VariantReaderBase {
 public:
-	bool ReadScalar(ValueWriter &result, yyjson_val *val) override {
+	bool ReadScalar(VectorWriter &result, yyjson_val *val) override {
 		int64_t res;
 		switch (unsafe_yyjson_get_tag(val)) {
 		case YYJSON_TYPE_NUM | YYJSON_SUBTYPE_SINT:
@@ -374,14 +487,14 @@ public:
 		default:
 			return false;
 		}
-		result.SetInt64(res);
+		result.Set(res);
 		return true;
 	}
 };
 
 class VariantReaderFloat64 : public VariantReaderBase {
 public:
-	bool ReadScalar(ValueWriter &result, yyjson_val *val) override {
+	bool ReadScalar(VectorWriter &result, yyjson_val *val) override {
 		double res;
 		switch (unsafe_yyjson_get_tag(val)) {
 		case YYJSON_TYPE_NUM | YYJSON_SUBTYPE_REAL:
@@ -409,14 +522,14 @@ public:
 		default:
 			return false;
 		}
-		result.SetDouble(res);
+		result.Set(res);
 		return true;
 	}
 };
 
 class VariantReaderNumeric : public VariantReaderBase {
 public:
-	bool ReadScalar(ValueWriter &result, yyjson_val *val) override {
+	bool ReadScalar(VectorWriter &result, yyjson_val *val) override {
 		hugeint_t res;
 		string message(1, ' ');
 		switch (unsafe_yyjson_get_tag(val)) {
@@ -447,24 +560,24 @@ public:
 		default:
 			return false;
 		}
-		result.SetNumeric(res);
+		result.Set(res);
 		return true;
 	}
 };
 
 class VariantReaderString : public VariantReaderBase {
 public:
-	bool ProcessScalar(ValueWriter &result, const ValueReader &arg) {
-		const string &tp = arg[0].GetString();
+	bool ProcessScalar(VectorWriter &result, const VectorReader &arg) {
+		std::string_view tp = arg[0].GetString();
 		return (tp == "STRING" || tp == "JSON") && VariantReaderBase::ProcessScalar(result, arg);
 	}
 
-	bool ProcessList(ValueWriter &result, const ValueReader &arg) {
-		const string &tp = arg[0].GetString();
+	bool ProcessList(VectorWriter &result, const VectorReader &arg) {
+		std::string_view tp = arg[0].GetString();
 		return (tp == "STRING[]" || tp == "JSON[]" || tp == "JSON") && VariantReaderBase::ProcessList(result, arg);
 	}
 
-	bool ReadScalar(ValueWriter &result, yyjson_val *val) override {
+	bool ReadScalar(VectorWriter &result, yyjson_val *val) override {
 		const char *res = yyjson_get_str(val);
 		if (!res) {
 			return false;
@@ -476,17 +589,15 @@ public:
 
 class VariantReaderBytes : public VariantReaderBase {
 public:
-	bool ProcessScalar(ValueWriter &result, const ValueReader &arg) {
-		const string &tp = arg[0].GetString();
-		return tp == "BYTES" && VariantReaderBase::ProcessScalar(result, arg);
+	bool ProcessScalar(VectorWriter &result, const VectorReader &arg) {
+		return arg[0].GetString() == "BYTES" && VariantReaderBase::ProcessScalar(result, arg);
 	}
 
-	bool ProcessList(ValueWriter &result, const ValueReader &arg) {
-		const string &tp = arg[0].GetString();
-		return tp == "BYTES[]" && VariantReaderBase::ProcessList(result, arg);
+	bool ProcessList(VectorWriter &result, const VectorReader &arg) {
+		return arg[0].GetString() == "BYTES[]" && VariantReaderBase::ProcessList(result, arg);
 	}
 
-	bool ReadScalar(ValueWriter &result, yyjson_val *val) override {
+	bool ReadScalar(VectorWriter &result, yyjson_val *val) override {
 		const char *str_val = yyjson_get_str(val);
 		if (!str_val) {
 			return false;
@@ -495,52 +606,49 @@ public:
 		idx_t size = Blob::FromBase64Size(str);
 		string res(size, '\0');
 		Blob::FromBase64(str, (data_ptr_t)res.data(), size);
-		result.SetString(move(res));
+		result.SetString(res);
 		return true;
 	}
 };
 
 class VariantReaderDate : public VariantReaderBase {
 public:
-	bool ProcessScalar(ValueWriter &result, const ValueReader &arg) {
-		const string &tp = arg[0].GetString();
-		return tp == "DATE" && VariantReaderBase::ProcessScalar(result, arg);
+	bool ProcessScalar(VectorWriter &result, const VectorReader &arg) {
+		return arg[0].GetString() == "DATE" && VariantReaderBase::ProcessScalar(result, arg);
 	}
 
-	bool ProcessList(ValueWriter &result, const ValueReader &arg) {
-		const string &tp = arg[0].GetString();
-		return tp == "DATE[]" && VariantReaderBase::ProcessList(result, arg);
+	bool ProcessList(VectorWriter &result, const VectorReader &arg) {
+		return arg[0].GetString() == "DATE[]" && VariantReaderBase::ProcessList(result, arg);
 	}
 
-	bool ReadScalar(ValueWriter &result, yyjson_val *val) override {
+	bool ReadScalar(VectorWriter &result, yyjson_val *val) override {
 		const char *str_val = yyjson_get_str(val);
 		if (!str_val) {
 			return false;
 		}
 		date_t res;
 		idx_t pos;
-		if (!Date::TryConvertDate(str_val, strlen(str_val), pos, res, true) ||
+		bool special;
+		if (!Date::TryConvertDate(str_val, strlen(str_val), pos, res, special, true) ||
 		    res.days == std::numeric_limits<int32_t>::max() || res.days <= -std::numeric_limits<int32_t>::max()) {
 			return false;
 		}
-		result.SetInt32(res.days);
+		result.Set(res.days);
 		return true;
 	}
 };
 
 class VariantReaderTime : public VariantReaderBase {
 public:
-	bool ProcessScalar(ValueWriter &result, const ValueReader &arg) {
-		const string &tp = arg[0].GetString();
-		return tp == "TIME" && VariantReaderBase::ProcessScalar(result, arg);
+	bool ProcessScalar(VectorWriter &result, const VectorReader &arg) {
+		return arg[0].GetString() == "TIME" && VariantReaderBase::ProcessScalar(result, arg);
 	}
 
-	bool ProcessList(ValueWriter &result, const ValueReader &arg) {
-		const string &tp = arg[0].GetString();
-		return tp == "TIME[]" && VariantReaderBase::ProcessList(result, arg);
+	bool ProcessList(VectorWriter &result, const VectorReader &arg) {
+		return arg[0].GetString() == "TIME[]" && VariantReaderBase::ProcessList(result, arg);
 	}
 
-	bool ReadScalar(ValueWriter &result, yyjson_val *val) override {
+	bool ReadScalar(VectorWriter &result, yyjson_val *val) override {
 		const char *str_val = yyjson_get_str(val);
 		if (!str_val) {
 			return false;
@@ -550,25 +658,25 @@ public:
 		if (!Time::TryConvertTime(str_val, strlen(str_val), pos, res, true)) {
 			return false;
 		}
-		result.SetInt64(res.micros);
+		result.Set(res.micros);
 		return true;
 	}
 };
 
 class VariantReaderTimestamp : public VariantReaderBase {
 public:
-	bool ProcessScalar(ValueWriter &result, const ValueReader &arg) {
-		const string &tp = arg[0].GetString();
+	bool ProcessScalar(VectorWriter &result, const VectorReader &arg) {
+		std::string_view tp = arg[0].GetString();
 		return (tp == "TIMESTAMP" || tp == "DATE" || tp == "DATETIME") && VariantReaderBase::ProcessScalar(result, arg);
 	}
 
-	bool ProcessList(ValueWriter &result, const ValueReader &arg) {
-		const string &tp = arg[0].GetString();
+	bool ProcessList(VectorWriter &result, const VectorReader &arg) {
+		std::string_view tp = arg[0].GetString();
 		return (tp == "TIMESTAMP[]" || tp == "DATE[]" || tp == "DATETIME[]") &&
 		       VariantReaderBase::ProcessList(result, arg);
 	}
 
-	bool ReadScalar(ValueWriter &result, yyjson_val *val) override {
+	bool ReadScalar(VectorWriter &result, yyjson_val *val) override {
 		const char *str_val = yyjson_get_str(val);
 		if (!str_val) {
 			return false;
@@ -577,24 +685,24 @@ public:
 		if (!Timestamp::TryConvertTimestamp(str_val, strlen(str_val), res)) {
 			return false;
 		}
-		result.SetInt64(res.value);
+		result.Set(res.value);
 		return true;
 	}
 };
 
 class VariantReaderDatetime : public VariantReaderBase {
 public:
-	bool ProcessScalar(ValueWriter &result, const ValueReader &arg) {
-		const string &tp = arg[0].GetString();
+	bool ProcessScalar(VectorWriter &result, const VectorReader &arg) {
+		std::string_view tp = arg[0].GetString();
 		return (tp == "DATE" || tp == "DATETIME") && VariantReaderBase::ProcessScalar(result, arg);
 	}
 
-	bool ProcessList(ValueWriter &result, const ValueReader &arg) {
-		const string &tp = arg[0].GetString();
+	bool ProcessList(VectorWriter &result, const VectorReader &arg) {
+		std::string_view tp = arg[0].GetString();
 		return (tp == "DATE[]" || tp == "DATETIME[]") && VariantReaderBase::ProcessList(result, arg);
 	}
 
-	bool ReadScalar(ValueWriter &result, yyjson_val *val) override {
+	bool ReadScalar(VectorWriter &result, yyjson_val *val) override {
 		const char *str_val = yyjson_get_str(val);
 		if (!str_val) {
 			return false;
@@ -603,24 +711,24 @@ public:
 		if (!Timestamp::TryConvertTimestamp(str_val, strlen(str_val), res)) {
 			return false;
 		}
-		result.SetInt64(res.value);
+		result.Set(res.value);
 		return true;
 	}
 };
 
 class VariantReaderInterval : public VariantReaderBase {
 public:
-	bool ProcessScalar(ValueWriter &result, const ValueReader &arg) {
-		const string &tp = arg[0].GetString();
+	bool ProcessScalar(VectorWriter &result, const VectorReader &arg) {
+		std::string_view tp = arg[0].GetString();
 		return (tp == "INTERVAL" || tp == "TIME") && VariantReaderBase::ProcessScalar(result, arg);
 	}
 
-	bool ProcessList(ValueWriter &result, const ValueReader &arg) {
-		const string &tp = arg[0].GetString();
+	bool ProcessList(VectorWriter &result, const VectorReader &arg) {
+		std::string_view tp = arg[0].GetString();
 		return (tp == "INTERVAL[]" || tp == "TIME[]") && VariantReaderBase::ProcessList(result, arg);
 	}
 
-	bool ReadScalar(ValueWriter &result, yyjson_val *val) override {
+	bool ReadScalar(VectorWriter &result, yyjson_val *val) override {
 		const char *str_val = yyjson_get_str(val);
 		if (!str_val) {
 			return false;
@@ -632,24 +740,24 @@ public:
 				return false;
 			}
 		}
-		result.SetInterval(res);
+		result.Set(res);
 		return true;
 	}
 };
 
 class VariantReaderJSON : public VariantReaderBase {
 public:
-	bool ProcessScalar(ValueWriter &result, const ValueReader &arg) {
-		result.SetString(string(arg[1].GetString()));
+	bool ProcessScalar(VectorWriter &result, const VectorReader &arg) {
+		result.SetString(arg[1].Get<string_t>());
 		return true;
 	}
 
-	bool ReadScalar(ValueWriter &result, yyjson_val *val) override {
+	bool ReadScalar(VectorWriter &result, yyjson_val *val) override {
 		auto res_doc = JSONCommon::CreateDocument();
 		yyjson_mut_doc_set_root(*res_doc, yyjson_val_mut_copy(*res_doc, val));
 		size_t len;
 		unique_ptr<char, decltype(&free)> data(yyjson_mut_write(*res_doc, 0, &len), free);
-		result.SetString(string(data.get(), len));
+		result.SetString(string_t(data.get(), len));
 		return true;
 	}
 };
@@ -657,24 +765,22 @@ public:
 template <class Reader>
 static void FromVariantFunc(DataChunk &args, ExpressionState &state, Vector &result) {
 	D_ASSERT(args.data[0].GetType() == DDVariantType);
-	Reader reader;
-	VectorExecuteUnary(args, result, std::bind(&Reader::ProcessScalar, &reader, _1, _2));
+	VectorExecute(args, result, Reader(), &Reader::ProcessScalar);
 }
 
 template <class Reader>
 static void FromVariantListFunc(DataChunk &args, ExpressionState &state, Vector &result) {
 	D_ASSERT(args.data[0].GetType() == DDVariantType);
-	Reader reader;
-	VectorExecuteUnary(args, result, std::bind(&Reader::ProcessList, &reader, _1, _2));
+	VectorExecute(args, result, Reader(), &Reader::ProcessList);
 }
 
-static bool VariantAccessWrite(ValueWriter &result, const ValueReader &arg, yyjson_val *val) {
+static bool VariantAccessWrite(VectorWriter &result, const VectorReader &arg, yyjson_val *val) {
 	if (!val || unsafe_yyjson_is_null(val)) {
 		return false;
 	}
-	const string &arg_type = arg[0].GetString();
+	std::string_view arg_type = arg[0].GetString();
 	string res_type;
-	if (StringUtil::StartsWith(arg_type, "JSON") || StringUtil::StartsWith(arg_type, "STRUCT")) {
+	if (arg_type.substr(0, 4) == "JSON" || arg_type.substr(0, 6) == "STRUCT") {
 		switch (unsafe_yyjson_get_tag(val)) {
 		case YYJSON_TYPE_STR | YYJSON_SUBTYPE_NONE:
 			res_type = "STRING";
@@ -700,41 +806,38 @@ static bool VariantAccessWrite(ValueWriter &result, const ValueReader &arg, yyjs
 		res_type = arg_type.substr(0, arg_type.find('['));
 	}
 
-	result.SetStruct();
-	result[0].SetString(move(res_type));
+	VectorStructWriter writer = result.SetStruct();
+	writer[0].SetString(res_type);
 	auto res_doc = JSONCommon::CreateDocument();
 	yyjson_mut_doc_set_root(*res_doc, yyjson_val_mut_copy(*res_doc, val));
 	size_t len;
 	unique_ptr<char, decltype(&free)> data(yyjson_mut_write(*res_doc, 0, &len), free);
-	result[1].SetString(string(data.get(), len));
+	writer[1].SetString(string_t(data.get(), len));
 	return true;
 }
 
-static bool VariantAccessIndexImpl(ValueWriter &result, const ValueReader &arg, const ValueReader &index) {
-	auto idx = index.GetUInt();
-	if (!idx) {
-		return false;
-	}
-	auto arg_doc = JSONCommon::ReadDocument(arg[1].GetString());
+static bool VariantAccessIndexImpl(VectorWriter &result, const VectorReader &arg, const VectorReader &index) {
+	int64_t idx = index.Get<int64_t>();
+	auto arg_doc = JSONCommon::ReadDocument(arg[1].Get<string_t>());
 	auto arg_root = yyjson_doc_get_root(*arg_doc);
-	return VariantAccessWrite(result, arg, yyjson_arr_get(arg_root, *idx));
+	return VariantAccessWrite(result, arg, yyjson_arr_get(arg_root, idx));
 }
 
-static bool VariantAccessKeyImpl(ValueWriter &result, const ValueReader &arg, const ValueReader &index) {
-	string key = index.GetString();
-	auto arg_doc = JSONCommon::ReadDocument(arg[1].GetString());
+static bool VariantAccessKeyImpl(VectorWriter &result, const VectorReader &arg, const VectorReader &index) {
+	std::string_view key = index.GetString();
+	auto arg_doc = JSONCommon::ReadDocument(arg[1].Get<string_t>());
 	auto arg_root = yyjson_doc_get_root(*arg_doc);
-	return VariantAccessWrite(result, arg, yyjson_obj_get(arg_root, key.data()));
+	return VariantAccessWrite(result, arg, yyjson_obj_getn(arg_root, key.data(), key.size()));
 }
 
 static void VariantAccessIndexFunc(DataChunk &args, ExpressionState &state, Vector &result) {
 	D_ASSERT(args.data[0].GetType() == DDVariantType);
-	VectorExecuteBinary(args, result, VariantAccessIndexImpl);
+	VectorExecute(args, result, VariantAccessIndexImpl);
 }
 
 static void VariantAccessKeyFunc(DataChunk &args, ExpressionState &state, Vector &result) {
 	D_ASSERT(args.data[0].GetType() == DDVariantType);
-	VectorExecuteBinary(args, result, VariantAccessKeyImpl);
+	VectorExecute(args, result, VariantAccessKeyImpl);
 }
 
 static string VariantSortHashReal(std::string_view arg) {
@@ -798,14 +901,14 @@ static string VariantSortHashInt(const string &arg) {
 	return res;
 }
 
-static bool VariantSortHashImpl(ValueWriter &writer, const ValueReader &arg, const ValueReader &case_sensitive) {
-	auto doc = JSONCommon::ReadDocument(arg[1].GetString());
+static bool VariantSortHashImpl(VectorWriter &writer, const VectorReader &arg, const VectorReader &case_sensitive) {
+	auto doc = JSONCommon::ReadDocument(arg[1].Get<string_t>());
 	auto val = yyjson_doc_get_root(*doc);
 	if (!val || unsafe_yyjson_is_null(val)) {
 		return false;
 	}
 	string result;
-	const string &tp = arg[0].GetString();
+	std::string_view tp = arg[0].GetString();
 	bool is_json = tp == "JSON";
 	auto js_tp = unsafe_yyjson_get_type(val);
 	auto js_tag = unsafe_yyjson_get_tag(val);
@@ -850,7 +953,7 @@ static bool VariantSortHashImpl(ValueWriter &writer, const ValueReader &arg, con
 		result = VariantSortHashReal(unsafe_yyjson_get_str(val));
 	} else if (tp == "STRING" || is_json && js_tp == YYJSON_TYPE_STR) {
 		result = string("3") + unsafe_yyjson_get_str(val);
-		if (!case_sensitive.GetBool()) {
+		if (!case_sensitive.Get<bool>()) {
 			std::transform(result.begin(), result.end(), result.begin(),
 			               [](unsigned char c) { return std::tolower(c); });
 		}
@@ -896,17 +999,17 @@ static bool VariantSortHashImpl(ValueWriter &writer, const ValueReader &arg, con
 		size_t len;
 		unique_ptr<char, decltype(&free)> data(yyjson_mut_write(*res_doc, 0, &len), free);
 		result = '9';
-		if (!case_sensitive.GetBool() &&
-		    (tp == "STRING[]" || StringUtil::StartsWith(tp, "STRUCT") || StringUtil::StartsWith(tp, "JSON"))) {
+		if (!case_sensitive.Get<bool>() &&
+		    (tp == "STRING[]" || tp.substr(0, 4) == "JSON" || tp.substr(0, 6) == "STRUCT")) {
 			std::transform(data.get(), data.get() + len, data.get(), [](unsigned char c) { return std::tolower(c); });
 		}
 		result.append(data.get(), len);
 	}
-	writer.SetString(move(result));
+	writer.SetString(result);
 	return true;
 }
 
-static bool VariantFromSortHashNumber(ValueWriter &writer, bool negative, int ex, std::string_view digits,
+static bool VariantFromSortHashNumber(VectorWriter &writer, bool negative, int ex, std::string_view digits,
                                       bool int_range) {
 	if (digits.size() <= ex + 1 && int_range) {
 		uint64_t res;
@@ -914,7 +1017,7 @@ static bool VariantFromSortHashNumber(ValueWriter &writer, bool negative, int ex
 		for (size_t i = ex + 1 - digits.size(); i-- > 0;) {
 			res *= 10;
 		}
-		return VariantWriter(LogicalType::BIGINT).Process(writer, ValueReader(Value::BIGINT(negative ? 0 - res : res)));
+		return VariantWriter(LogicalType::BIGINT).Process(writer, VectorHolder(int64_t(negative ? 0 - res : res))[0]);
 	}
 	string s;
 	if (negative) {
@@ -929,25 +1032,26 @@ static bool VariantFromSortHashNumber(ValueWriter &writer, bool negative, int ex
 	s += duckdb_fmt::format("e{:+03d}", ex);
 	double d = stod(s);
 	if (duckdb_fmt::format("{:.16e}", d) == s) {
-		return VariantWriter(LogicalType::DOUBLE).Process(writer, ValueReader(d));
+		return VariantWriter(LogicalType::DOUBLE).Process(writer, VectorHolder(d)[0]);
 	}
-	Value v = s;
+	hugeint_t v;
+	string error;
 	try {
-		if (!v.DefaultTryCastAs(DDNumericType)) {
+		if (!TryCastToDecimal::Operation(string_t(s), v, &error, dd_numeric_width, dd_numeric_scale)) {
 			return false;
 		}
 	} catch (OutOfRangeException) {
 		return false;
 	}
-	return VariantWriter(DDNumericType).Process(writer, ValueReader(v));
+	return VariantWriter(DDNumericType).Process(writer, VectorHolder(v)[0]);
 }
 
-static bool VariantFromSortHashImpl(ValueWriter &writer, const ValueReader &reader) {
-	const string &arg = reader.GetString();
+static bool VariantFromSortHashImpl(VectorWriter &writer, const VectorReader &reader) {
+	std::string_view arg = reader.GetString();
 	switch (arg[0]) {
 	case '0': {
 		bool res = arg[1] == '1';
-		return VariantWriter(LogicalType::BOOLEAN).Process(writer, ValueReader(Value::BOOLEAN(res)));
+		return VariantWriter(LogicalType::BOOLEAN).Process(writer, VectorHolder(res)[0]);
 	}
 	case '1': {
 		double res;
@@ -970,14 +1074,14 @@ static bool VariantFromSortHashImpl(ValueWriter &writer, const ValueReader &read
 			return VariantFromSortHashNumber(writer, true, 500 - ex, s,
 			                                 arg >= "14820776627963145224191" && arg <= "15009");
 		}
-		return VariantWriter(LogicalType::DOUBLE).Process(writer, ValueReader(res));
+		return VariantWriter(LogicalType::DOUBLE).Process(writer, VectorHolder(res)[0]);
 	}
 	case '2': {
 		if (arg.size() == 1) {
-			return VariantWriter(LogicalType::INTEGER).Process(writer, ValueReader(0));
+			return VariantWriter(LogicalType::INTEGER).Process(writer, VectorHolder(int32_t(0))[0]);
 		} else if (arg.size() == 2 && arg[1] == '9') {
 			return VariantWriter(LogicalType::DOUBLE)
-			    .Process(writer, ValueReader(std::numeric_limits<double>::infinity()));
+			    .Process(writer, VectorHolder(std::numeric_limits<double>::infinity())[0]);
 		}
 		std::string_view s(&arg[4], arg.size() - 4);
 		s.remove_suffix(s.size() - 1 - s.find_last_not_of('0'));
@@ -987,7 +1091,7 @@ static bool VariantFromSortHashImpl(ValueWriter &writer, const ValueReader &read
 		                                 arg >= "25001" && arg <= "251892233720368547758071");
 	}
 	case '3':
-		return VariantWriter(LogicalType::VARCHAR).Process(writer, ValueReader(arg.substr(1)));
+		return VariantWriter(LogicalType::VARCHAR).Process(writer, VectorHolder(arg.substr(1))[0]);
 	case '4': {
 		string decoded;
 		for (size_t i = 1; i < arg.size(); ++i) {
@@ -1003,28 +1107,29 @@ static bool VariantFromSortHashImpl(ValueWriter &writer, const ValueReader &read
 				decoded += c;
 			}
 		}
-		return VariantWriter(LogicalType::BLOB).Process(writer, ValueReader(Value::BLOB_RAW(decoded)));
+		return VariantWriter(LogicalType::BLOB).Process(writer, VectorHolder(string_t(decoded))[0]);
 	}
 	case '5':
+		arg.remove_prefix(1);
 		return VariantWriter(LogicalType::TIME)
-		    .Process(writer, ValueReader(Value(arg.substr(1)).DefaultCastAs(LogicalType::TIME)));
+		    .Process(writer, VectorHolder(Time::FromCString(arg.data(), arg.size(), true))[0]);
 	case '6':
-		if (StringUtil::EndsWith(arg, "T00:00:00")) {
+		arg.remove_prefix(1);
+		if (arg.size() >= 9 && arg.substr(arg.size() - 9, arg.npos) == "T00:00:00") {
 			return VariantWriter(LogicalType::DATE)
-			    .Process(writer, ValueReader(Value(arg.substr(1)).DefaultCastAs(LogicalType::DATE)));
+			    .Process(writer, VectorHolder(Date::FromCString(arg.data(), arg.size()))[0]);
 		} else {
 			return VariantWriter(LogicalType::TIMESTAMP)
-			    .Process(writer, ValueReader(Value(arg.substr(1)).DefaultCastAs(LogicalType::TIMESTAMP)));
+			    .Process(writer, VectorHolder(Timestamp::FromCString(arg.data(), arg.size()))[0]);
 		}
 	case '7': {
 		int64_t micros;
 		std::from_chars(&arg[1], &arg[arg.size() - 3], micros);
 		micros -= 943488000000000000;
-		return VariantWriter(LogicalType::INTERVAL)
-		    .Process(writer, ValueReader(Value::INTERVAL(Interval::FromMicro(micros))));
+		return VariantWriter(LogicalType::INTERVAL).Process(writer, VectorHolder(Interval::FromMicro(micros))[0]);
 	}
 	case '9': {
-		return VariantWriter(LogicalType::JSON).Process(writer, ValueReader(Value::JSON(arg.substr(1))));
+		return VariantWriter(LogicalType::JSON).Process(writer, VectorHolder(arg.substr(1))[0]);
 	}
 	default:
 		return false;
@@ -1033,12 +1138,12 @@ static bool VariantFromSortHashImpl(ValueWriter &writer, const ValueReader &read
 
 static void VariantSortHash(DataChunk &args, ExpressionState &state, Vector &result) {
 	D_ASSERT(args.data[0].GetType() == DDVariantType);
-	VectorExecuteBinary(args, result, VariantSortHashImpl);
+	VectorExecute(args, result, VariantSortHashImpl);
 }
 
 static void VariantFromSortHash(DataChunk &args, ExpressionState &state, Vector &result) {
 	D_ASSERT(args.data[0].GetType().id() == LogicalTypeId::VARCHAR);
-	VectorExecuteUnary(args, result, VariantFromSortHashImpl);
+	VectorExecute(args, result, VariantFromSortHashImpl);
 }
 
 } // namespace

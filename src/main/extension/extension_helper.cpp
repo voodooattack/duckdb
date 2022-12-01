@@ -121,9 +121,8 @@ DefaultExtension ExtensionHelper::GetDefaultExtension(idx_t index) {
 // Load Statically Compiled Extension
 //===--------------------------------------------------------------------===//
 void ExtensionHelper::LoadAllExtensions(DuckDB &db) {
-	unordered_set<string> extensions {"parquet",    "icu",  "tpch",  "tpcds",    "fts",  "httpfs",
-	                                  "visualizer", "json", "excel", "sqlsmith", "inet", "jemalloc",
-	                                  "datadocs"};
+	unordered_set<string> extensions {"parquet", "icu",   "tpch",     "tpcds", "fts",      "httpfs",  "visualizer",
+	                                  "json",    "excel", "sqlsmith", "inet",  "jemalloc", "datadocs"};
 	for (auto &ext : extensions) {
 		LoadExtensionInternal(db, ext, true);
 	}
