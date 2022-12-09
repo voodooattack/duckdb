@@ -9,6 +9,7 @@ namespace duckdb {
 void DataDocsExtension::Load(DuckDB &db) {
 	Connection con(db);
 	con.BeginTransaction();
+	LoadGeo(con);
 	LoadVariant(con);
 	con.Commit();
 }

@@ -37,7 +37,7 @@ std::string_view VectorReader::GetString() const noexcept {
 	return {s.GetDataUnsafe(), s.GetSize()};
 }
 
-VectorReader VectorReader::operator[](idx_t index) const noexcept {
+VectorReader VectorReader::operator[](size_t index) const noexcept {
 	D_ASSERT(index < holder.child_data.size());
 	return {holder.child_data[index], i_sel_row};
 }
@@ -76,6 +76,10 @@ void VectorWriter::SetString(string_t data) {
 	FlatVector::GetData<string_t>(vec)[i_row] = StringVector::AddStringOrBlob(vec, data);
 }
 
+string_t &VectorWriter::ReserveString(idx_t size) {
+	return FlatVector::GetData<string_t>(vec)[i_row] = StringVector::EmptyString(vec, size);
+}
+
 VectorListWriter VectorWriter::SetList() noexcept {
 	D_ASSERT(vec.GetType().id() == LogicalTypeId::LIST);
 	return {(VectorListBuffer &)*vec.GetAuxiliary(), FlatVector::GetData<list_entry_t>(vec)[i_row]};
@@ -102,7 +106,7 @@ VectorWriter VectorListWriter::Append() {
 	return {buffer.GetChild(), buffer.size++};
 }
 
-VectorWriter VectorStructWriter::operator[](idx_t index) noexcept {
+VectorWriter VectorStructWriter::operator[](size_t index) noexcept {
 	D_ASSERT(index < children.size());
 	return {*children[index], i_row};
 }

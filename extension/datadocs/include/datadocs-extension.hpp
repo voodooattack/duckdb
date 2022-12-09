@@ -10,6 +10,7 @@ public:
 	string Name() override;
 
 private:
+	void LoadGeo(Connection &con);
 	void LoadVariant(Connection &con);
 };
 

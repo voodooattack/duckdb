@@ -49,7 +49,7 @@ public:
 
 	bool IsNull() const noexcept;
 	std::string_view GetString() const noexcept;
-	VectorReader operator[](idx_t index) const noexcept;
+	VectorReader operator[](size_t index) const noexcept;
 	uint64_t ListSize() const noexcept;
 	ListIterator begin() const noexcept;
 	idx_t end() const noexcept;
@@ -93,6 +93,7 @@ public:
 
 	void SetNull();
 	void SetString(string_t data);
+	string_t &ReserveString(idx_t size);
 	VectorListWriter SetList() noexcept;
 	VectorStructWriter SetStruct() noexcept;
 
@@ -124,7 +125,7 @@ public:
 	VectorStructWriter(vector<unique_ptr<Vector>> &children, idx_t i_row) noexcept : children(children), i_row(i_row) {
 	}
 
-	VectorWriter operator[](idx_t index) noexcept;
+	VectorWriter operator[](size_t index) noexcept;
 
 private:
 	vector<unique_ptr<Vector>> &children;
@@ -153,7 +154,7 @@ void VectorExecuteImpl(DataChunk &args, Vector &result, FUNC &&func, std::index_
 
 template <bool CHECK_NULL = true, typename... ARGS>
 void VectorExecute(DataChunk &args, Vector &result, bool(*func)(VectorWriter &, ARGS...)) {
-	VectorExecuteImpl<CHECK_NULL>(args, result, func, std::index_sequence_for<ARGS...>{});
+	VectorExecuteImpl<CHECK_NULL>(args, result, func, std::index_sequence_for<ARGS...>());
 }
 
 template <bool CHECK_NULL = true, class T, typename... ARGS>
@@ -161,7 +162,7 @@ void VectorExecute(DataChunk &args, Vector &result, T &&instance,
 	               bool(std::remove_reference_t<T>::*method)(VectorWriter &, ARGS...)) {
 	VectorExecuteImpl<CHECK_NULL>(
 	    args, result, [&](auto &&...args) { return (instance.*method)(std::forward<decltype(args)>(args)...); },
-	    std::index_sequence_for<ARGS...>{});
+	    std::index_sequence_for<ARGS...>());
 }
 
 } // namespace duckdb

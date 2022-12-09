@@ -13,6 +13,8 @@
 #endif
 #include "fmt/format.h"
 #include "json_common.hpp"
+#include "geometry.hpp"
+#include "postgis/lwgeom_ogc.hpp"
 
 #include "datadocs-extension.hpp"
 #include "datadocs.hpp"
@@ -20,6 +22,8 @@
 #include "converters.hpp"
 
 namespace duckdb {
+
+LogicalType DDGeoType;
 
 const LogicalType DDNumericType = LogicalType::DECIMAL(dd_numeric_width, dd_numeric_scale);
 
@@ -117,8 +121,13 @@ public:
 			write_func = &VariantWriter::WriteString;
 			break;
 		case LogicalTypeId::BLOB:
-			type_name = is_list ? "BYTES[]" : "BYTES";
-			write_func = &VariantWriter::WriteBytes;
+			if (type->GetAlias() == "GEOMETRY") {
+				type_name = is_list ? "GEOGRAPHY[]" : "GEOGRAPHY";
+				write_func = &VariantWriter::WriteGeography;
+			} else {
+				type_name = is_list ? "BYTES[]" : "BYTES";
+				write_func = &VariantWriter::WriteBytes;
+			}
 			break;
 		case LogicalTypeId::UUID:
 			type_name = is_list ? "STRING[]" : "STRING";
@@ -358,6 +367,11 @@ private:
 	yyjson_mut_val *WriteJSON(const VectorReader &arg) {
 		auto arg_doc = JSONCommon::ReadDocument(arg.Get<string_t>());
 		return yyjson_val_mut_copy(doc, yyjson_doc_get_root(*arg_doc));
+	}
+
+	yyjson_mut_val *WriteGeography(const VectorReader &arg) {
+		string s = Geometry::GetString(arg.Get<string_t>(), DataFormatType::FORMAT_VALUE_TYPE_WKT);
+		return yyjson_mut_strncpy(doc, s.data(), s.size());
 	}
 
 	yyjson_mut_val *WriteList(const VectorReader &arg) {
@@ -762,6 +776,33 @@ public:
 	}
 };
 
+class VariantReaderGeography : public VariantReaderBase {
+public:
+	bool ProcessScalar(VectorWriter &result, const VectorReader &arg) {
+		return arg[0].GetString() == "GEOGRAPHY" && VariantReaderBase::ProcessScalar(result, arg);
+	}
+
+	bool ProcessList(VectorWriter &result, const VectorReader &arg) {
+		return arg[0].GetString() == "GEOGRAPHY[]" && VariantReaderBase::ProcessList(result, arg);
+	}
+
+	bool ReadScalar(VectorWriter &result, yyjson_val *val) override {
+		const char *str_val = yyjson_get_str(val);
+		if (!str_val) {
+			return false;
+		}
+		GSERIALIZED *gser = LWGEOM_from_text((char *)str_val);
+		if (!gser) {
+			return false;
+		}
+		string_t &s = result.ReserveString(Geometry::GetGeometrySize(gser));
+		Geometry::ToGeometry(gser, (data_ptr_t)s.GetDataWriteable());
+		Geometry::DestroyGeometry(gser);
+		s.Finalize();
+		return true;
+	}
+};
+
 template <class Reader>
 static void FromVariantFunc(DataChunk &args, ExpressionState &state, Vector &result) {
 	D_ASSERT(args.data[0].GetType() == DDVariantType);
@@ -993,6 +1034,8 @@ static bool VariantSortHashImpl(VectorWriter &writer, const VectorReader &arg, c
 		}
 		int64_t micros = Interval::GetMicro(iv);
 		result = duckdb_fmt::format("7{:019d}000", micros + 943488000000000000);
+	} else if (tp == "GEOGRAPHY") {
+		result = string("8") + unsafe_yyjson_get_str(val);
 	} else {
 		auto res_doc = JSONCommon::CreateDocument();
 		yyjson_mut_doc_set_root(*res_doc, yyjson_val_mut_copy(*res_doc, val));
@@ -1128,6 +1171,16 @@ static bool VariantFromSortHashImpl(VectorWriter &writer, const VectorReader &re
 		micros -= 943488000000000000;
 		return VariantWriter(LogicalType::INTERVAL).Process(writer, VectorHolder(Interval::FromMicro(micros))[0]);
 	}
+	case '8': {
+		string wkt(arg.substr(1));
+		GSERIALIZED *gser = LWGEOM_from_text((char *)wkt.data());
+		if (!gser) {
+			return false;
+		}
+		string wkb = Geometry::ToGeometry(gser);
+		Geometry::DestroyGeometry(gser);
+		return VariantWriter(DDGeoType).Process(writer, VectorHolder(string_t(wkb))[0]);
+	}
 	case '9': {
 		return VariantWriter(LogicalType::JSON).Process(writer, VectorHolder(arg.substr(1))[0]);
 	}
@@ -1177,6 +1230,7 @@ void DataDocsExtension::LoadVariant(Connection &con) {
 	REGISTER_FUNCTION(LogicalType::TIMESTAMP, datetime, Datetime)
 	REGISTER_FUNCTION(LogicalType::INTERVAL, interval, Interval)
 	REGISTER_FUNCTION(LogicalType::JSON, json, JSON)
+	REGISTER_FUNCTION(DDGeoType, geography, Geography)
 
 	ScalarFunctionSet variant_access_set("variant_access");
 	variant_access_set.AddFunction(
