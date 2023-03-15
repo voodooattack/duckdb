@@ -3,7 +3,22 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/field_writer.hpp"
 
+#include "duckdb/common/serializer/format_serializer.hpp"
+#include "duckdb/common/serializer/format_deserializer.hpp"
+
 namespace duckdb {
+
+void CaseCheck::FormatSerialize(FormatSerializer &serializer) const {
+	serializer.WriteProperty("when_expr", when_expr);
+	serializer.WriteProperty("then_expr", then_expr);
+}
+
+CaseCheck CaseCheck::FormatDeserialize(FormatDeserializer &deserializer) {
+	CaseCheck check;
+	deserializer.ReadProperty("when_expr", check.when_expr);
+	deserializer.ReadProperty("then_expr", check.then_expr);
+	return check;
+}
 
 CaseExpression::CaseExpression() : ParsedExpression(ExpressionType::CASE_EXPR, ExpressionClass::CASE) {
 }
@@ -12,7 +27,7 @@ string CaseExpression::ToString() const {
 	return ToString<CaseExpression, ParsedExpression>(*this);
 }
 
-bool CaseExpression::Equals(const CaseExpression *a, const CaseExpression *b) {
+bool CaseExpression::Equal(const CaseExpression *a, const CaseExpression *b) {
 	if (a->case_checks.size() != b->case_checks.size()) {
 		return false;
 	}
@@ -37,10 +52,10 @@ unique_ptr<ParsedExpression> CaseExpression::Copy() const {
 		CaseCheck new_check;
 		new_check.when_expr = check.when_expr->Copy();
 		new_check.then_expr = check.then_expr->Copy();
-		copy->case_checks.push_back(move(new_check));
+		copy->case_checks.push_back(std::move(new_check));
 	}
 	copy->else_expr = else_expr->Copy();
-	return move(copy);
+	return std::move(copy);
 }
 
 void CaseExpression::Serialize(FieldWriter &writer) const {
@@ -63,10 +78,23 @@ unique_ptr<ParsedExpression> CaseExpression::Deserialize(ExpressionType type, Fi
 		CaseCheck new_check;
 		new_check.when_expr = ParsedExpression::Deserialize(source);
 		new_check.then_expr = ParsedExpression::Deserialize(source);
-		result->case_checks.push_back(move(new_check));
+		result->case_checks.push_back(std::move(new_check));
 	}
 	result->else_expr = reader.ReadRequiredSerializable<ParsedExpression>();
-	return move(result);
+	return std::move(result);
+}
+
+void CaseExpression::FormatSerialize(FormatSerializer &serializer) const {
+	ParsedExpression::FormatSerialize(serializer);
+	serializer.WriteProperty("case_checks", case_checks);
+	serializer.WriteProperty("else_expr", *else_expr);
+}
+
+unique_ptr<ParsedExpression> CaseExpression::FormatDeserialize(ExpressionType type, FormatDeserializer &deserializer) {
+	auto result = make_unique<CaseExpression>();
+	deserializer.ReadProperty("case_checks", result->case_checks);
+	deserializer.ReadProperty("else_expr", result->else_expr);
+	return std::move(result);
 }
 
 } // namespace duckdb

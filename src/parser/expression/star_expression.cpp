@@ -3,16 +3,19 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/field_writer.hpp"
 
+#include "duckdb/common/serializer/format_serializer.hpp"
+#include "duckdb/common/serializer/format_deserializer.hpp"
+
 namespace duckdb {
 
 StarExpression::StarExpression(string relation_name_p)
-    : ParsedExpression(ExpressionType::STAR, ExpressionClass::STAR), relation_name(move(relation_name_p)) {
+    : ParsedExpression(ExpressionType::STAR, ExpressionClass::STAR), relation_name(std::move(relation_name_p)) {
 }
 
 string StarExpression::ToString() const {
-	if (!regex.empty()) {
+	if (expr) {
 		D_ASSERT(columns);
-		return "COLUMNS('" + regex + "')";
+		return "COLUMNS(" + expr->ToString() + ")";
 	}
 	string result;
 	if (columns) {
@@ -51,7 +54,7 @@ string StarExpression::ToString() const {
 	return result;
 }
 
-bool StarExpression::Equals(const StarExpression *a, const StarExpression *b) {
+bool StarExpression::Equal(const StarExpression *a, const StarExpression *b) {
 	if (a->relation_name != b->relation_name || a->exclude_list != b->exclude_list) {
 		return false;
 	}
@@ -70,7 +73,7 @@ bool StarExpression::Equals(const StarExpression *a, const StarExpression *b) {
 			return false;
 		}
 	}
-	if (a->regex != b->regex) {
+	if (!BaseExpression::Equals(a->expr.get(), b->expr.get())) {
 		return false;
 	}
 	return true;
@@ -93,7 +96,7 @@ void StarExpression::Serialize(FieldWriter &writer) const {
 		entry.second->Serialize(serializer);
 	}
 	writer.WriteField<bool>(columns);
-	writer.WriteString(regex);
+	writer.WriteOptional(expr);
 }
 
 unique_ptr<ParsedExpression> StarExpression::Deserialize(ExpressionType type, FieldReader &reader) {
@@ -109,11 +112,11 @@ unique_ptr<ParsedExpression> StarExpression::Deserialize(ExpressionType type, Fi
 	for (idx_t i = 0; i < replace_count; i++) {
 		auto name = source.Read<string>();
 		auto expr = ParsedExpression::Deserialize(source);
-		result->replace_list.insert(make_pair(name, move(expr)));
+		result->replace_list.insert(make_pair(name, std::move(expr)));
 	}
 	result->columns = reader.ReadField<bool>(false);
-	result->regex = reader.ReadField<string>(string());
-	return move(result);
+	result->expr = reader.ReadOptional<ParsedExpression>(nullptr);
+	return std::move(result);
 }
 
 unique_ptr<ParsedExpression> StarExpression::Copy() const {
@@ -123,9 +126,26 @@ unique_ptr<ParsedExpression> StarExpression::Copy() const {
 		copy->replace_list[entry.first] = entry.second->Copy();
 	}
 	copy->columns = columns;
-	copy->regex = regex;
+	copy->expr = expr ? expr->Copy() : nullptr;
 	copy->CopyProperties(*this);
-	return move(copy);
+	return std::move(copy);
+}
+
+void StarExpression::FormatSerialize(FormatSerializer &serializer) const {
+	ParsedExpression::FormatSerialize(serializer);
+	serializer.WriteProperty("relation_name", relation_name);
+	serializer.WriteProperty("exclude_list", exclude_list);
+	serializer.WriteProperty("replace_list", replace_list);
+	serializer.WriteProperty("columns", columns);
+}
+
+unique_ptr<ParsedExpression> StarExpression::FormatDeserialize(ExpressionType type, FormatDeserializer &deserializer) {
+	auto result = make_unique<StarExpression>();
+	deserializer.ReadProperty("relation_name", result->relation_name);
+	deserializer.ReadProperty("exclude_list", result->exclude_list);
+	deserializer.ReadProperty("replace_list", result->replace_list);
+	deserializer.ReadProperty("columns", result->columns);
+	return std::move(result);
 }
 
 } // namespace duckdb

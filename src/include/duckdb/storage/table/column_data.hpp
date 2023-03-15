@@ -15,7 +15,8 @@
 #include "duckdb/storage/data_pointer.hpp"
 #include "duckdb/storage/table/persistent_table_data.hpp"
 #include "duckdb/storage/statistics/segment_statistics.hpp"
-#include "duckdb/storage/table/column_checkpoint_state.hpp"
+#include "duckdb/storage/table/segment_tree.hpp"
+#include "duckdb/storage/table/column_segment.hpp"
 #include "duckdb/common/mutex.hpp"
 
 namespace duckdb {
@@ -25,14 +26,17 @@ class DatabaseInstance;
 class RowGroup;
 class RowGroupWriter;
 class TableDataWriter;
+class TableStorageInfo;
 struct TransactionData;
 
 struct DataTableInfo;
 
 struct ColumnCheckpointInfo {
-	ColumnCheckpointInfo(CompressionType compression_type_p) : compression_type(compression_type_p) {};
+	explicit ColumnCheckpointInfo(CompressionType compression_type_p) : compression_type(compression_type_p) {};
 	CompressionType compression_type;
 };
+
+class ColumnSegmentTree : public SegmentTree<ColumnSegment> {};
 
 class ColumnData {
 	friend class ColumnDataCheckpointer;
@@ -123,7 +127,7 @@ public:
 	                                          idx_t start_row, Deserializer &source, const LogicalType &type,
 	                                          ColumnData *parent);
 
-	virtual void GetStorageInfo(idx_t row_group_index, vector<idx_t> col_path, vector<vector<Value>> &result);
+	virtual void GetStorageInfo(idx_t row_group_index, vector<idx_t> col_path, TableStorageInfo &result);
 	virtual void Verify(RowGroup &parent);
 
 	static shared_ptr<ColumnData> CreateColumn(BlockManager &block_manager, DataTableInfo &info, idx_t column_index,
@@ -147,7 +151,7 @@ protected:
 
 protected:
 	//! The segments holding the data of this column segment
-	SegmentTree data;
+	ColumnSegmentTree data;
 	//! The lock for the updates
 	mutex update_lock;
 	//! The updates for this column segment

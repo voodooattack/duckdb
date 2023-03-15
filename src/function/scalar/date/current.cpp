@@ -5,12 +5,12 @@
 #include "duckdb/common/vector_operations/vector_operations.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckdb/main/client_context.hpp"
-#include "duckdb/transaction/transaction.hpp"
+#include "duckdb/transaction/meta_transaction.hpp"
 
 namespace duckdb {
 
 static timestamp_t GetTransactionTimestamp(ExpressionState &state) {
-	return state.GetContext().ActiveTransaction().start_timestamp;
+	return MetaTransaction::Get(state.GetContext()).start_timestamp;
 }
 
 static void CurrentTimeFunction(DataChunk &input, ExpressionState &state, Vector &result) {
@@ -35,14 +35,12 @@ static void CurrentTimestampFunction(DataChunk &input, ExpressionState &state, V
 
 void CurrentTimeFun::RegisterFunction(BuiltinFunctions &set) {
 	ScalarFunction current_time("get_current_time", {}, LogicalType::TIME, CurrentTimeFunction);
-	;
 	current_time.side_effects = FunctionSideEffects::HAS_SIDE_EFFECTS;
 	set.AddFunction(current_time);
 }
 
 void CurrentDateFun::RegisterFunction(BuiltinFunctions &set) {
 	ScalarFunction current_date({}, LogicalType::DATE, CurrentDateFunction);
-	;
 	current_date.side_effects = FunctionSideEffects::HAS_SIDE_EFFECTS;
 	set.AddFunction({"today", "current_date"}, current_date);
 }

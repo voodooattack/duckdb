@@ -255,7 +255,7 @@ simple_select:
             | select_clause UNION all_or_distinct by_name select_clause
 				{
 					$$ = makeSetOp(PG_SETOP_UNION_BY_NAME, $3, $1, $5);
-				}    
+				}
 			| select_clause UNION all_or_distinct select_clause
 				{
 					$$ = makeSetOp(PG_SETOP_UNION, $3, $1, $4);
@@ -268,6 +268,83 @@ simple_select:
 				{
 					$$ = makeSetOp(PG_SETOP_EXCEPT, $3, $1, $4);
 				}
+			| pivot_keyword table_ref ON pivot_column_list USING target_list_opt_comma
+				{
+					PGSelectStmt *res = makeNode(PGSelectStmt);
+					PGPivotStmt *n = makeNode(PGPivotStmt);
+					n->source = $2;
+					n->columns = $4;
+					n->aggrs = $6;
+					res->pivot = n;
+					$$ = (PGNode *)res;
+				}
+			| pivot_keyword table_ref ON pivot_column_list USING target_list_opt_comma GROUP_P BY name_list_opt_comma_opt_bracket
+				{
+					PGSelectStmt *res = makeNode(PGSelectStmt);
+					PGPivotStmt *n = makeNode(PGPivotStmt);
+					n->source = $2;
+					n->columns = $4;
+					n->aggrs = $6;
+					n->groups = $9;
+					res->pivot = n;
+					$$ = (PGNode *)res;
+				}
+			| unpivot_keyword table_ref ON target_list_opt_comma INTO NAME_P name VALUE_P name
+				{
+					PGSelectStmt *res = makeNode(PGSelectStmt);
+					PGPivotStmt *n = makeNode(PGPivotStmt);
+					n->source = $2;
+					n->unpivots = list_make1(makeString($9));
+					PGPivot *piv = makeNode(PGPivot);
+					piv->pivot_columns = list_make1(makeString($7));
+					piv->pivot_value = $4;
+					n->columns = list_make1(piv);
+
+					res->pivot = n;
+					$$ = (PGNode *)res;
+				}
+			| unpivot_keyword table_ref ON target_list_opt_comma
+				{
+					PGSelectStmt *res = makeNode(PGSelectStmt);
+					PGPivotStmt *n = makeNode(PGPivotStmt);
+					n->source = $2;
+					n->unpivots = list_make1(makeString("value"));
+					PGPivot *piv = makeNode(PGPivot);
+					piv->pivot_columns = list_make1(makeString("name"));
+					piv->pivot_value = $4;
+					n->columns = list_make1(piv);
+
+					res->pivot = n;
+					$$ = (PGNode *)res;
+				}
+		;
+
+pivot_keyword:
+		PIVOT | PIVOT_WIDER
+	;
+
+unpivot_keyword:
+		UNPIVOT | PIVOT_LONGER
+	;
+
+pivot_column_entry:
+			ColIdOrString
+			{
+				PGPivot *n = makeNode(PGPivot);
+				n->pivot_columns = list_make1(makeString($1));
+				$$ = (PGNode *) n;
+			}
+			| pivot_value													{ $$ = $1; }
+		;
+
+pivot_column_list_internal:
+			pivot_column_entry												{ $$ = list_make1($1); }
+			| pivot_column_list_internal ',' pivot_column_entry 			{ $$ = lappend($1, $3); }
+		;
+
+pivot_column_list:
+			pivot_column_list_internal										{ $$ = $1; }
+			| pivot_column_list_internal ','								{ $$ = $1; }
 		;
 
 /*
@@ -436,17 +513,10 @@ sort_clause:
 			| ORDER BY ALL opt_asc_desc opt_nulls_order
 				{
 					PGSortBy *sort = makeNode(PGSortBy);
-					sort->node = (PGNode *) makeNode(PGAStar);
-					sort->sortby_dir = $4;
-					sort->sortby_nulls = $5;
-					sort->useOp = NIL;
-					sort->location = -1;		/* no operator */
-					$$ = list_make1(sort);
-				}
-			| ORDER BY '*' opt_asc_desc opt_nulls_order
-				{
-					PGSortBy *sort = makeNode(PGSortBy);
-					sort->node = (PGNode *) makeNode(PGAStar);
+					PGAStar *star = makeNode(PGAStar);
+					star->columns = true;
+					star->location = @3;
+					sort->node = (PGNode *) star;
 					sort->sortby_dir = $4;
 					sort->sortby_nulls = $5;
 					sort->useOp = NIL;
@@ -706,11 +776,6 @@ group_clause:
 					PGNode *node = (PGNode *) makeGroupingSet(GROUPING_SET_ALL, NIL, @3);
 					$$ = list_make1(node);
 				}
-			| GROUP_P BY '*'
-				{
-					PGNode *node = (PGNode *) makeGroupingSet(GROUPING_SET_ALL, NIL, @3);
-					$$ = list_make1(node);
-				}
 			| /*EMPTY*/								{ $$ = NIL; }
 		;
 
@@ -936,8 +1001,69 @@ table_ref:	relation_expr opt_alias_clause opt_tablesample_clause
 					$2->alias = $4;
 					$$ = (PGNode *) $2;
 				}
+			| table_ref PIVOT '(' target_list_opt_comma FOR pivot_value_list opt_pivot_group_by ')' opt_alias_clause
+				{
+					PGPivotExpr *n = makeNode(PGPivotExpr);
+					n->source = $1;
+					n->aggrs = $4;
+					n->pivots = $6;
+					n->groups = $7;
+					n->alias = $9;
+					$$ = (PGNode *) n;
+				}
+			| table_ref UNPIVOT opt_include_nulls '(' pivot_header FOR pivot_value_list ')' opt_alias_clause
+				{
+					PGPivotExpr *n = makeNode(PGPivotExpr);
+					n->source = $1;
+					n->include_nulls = $3;
+					n->unpivots = $5;
+					n->pivots = $7;
+					n->alias = $9;
+					$$ = (PGNode *) n;
+				}
 		;
 
+opt_pivot_group_by:
+	GROUP_P BY name_list_opt_comma		{ $$ = $3; }
+	| /* empty */						{ $$ = NULL; }
+
+opt_include_nulls:
+	INCLUDE_P NULLS_P					{ $$ = true; }
+	| EXCLUDE NULLS_P					{ $$ = false; }
+	| /* empty */						{ $$ = false; }
+
+pivot_header:
+		ColIdOrString 				  { $$ = list_make1(makeString($1)); }
+		| '(' name_list_opt_comma ')' { $$ = $2; }
+	;
+
+pivot_value:
+	pivot_header IN_P '(' target_list_opt_comma ')'
+		{
+			PGPivot *n = makeNode(PGPivot);
+			n->pivot_columns = $1;
+			n->pivot_value = $4;
+			$$ = (PGNode *) n;
+		}
+	|
+	pivot_header IN_P ColIdOrString
+		{
+			PGPivot *n = makeNode(PGPivot);
+			n->pivot_columns = $1;
+			n->pivot_enum = $3;
+			$$ = (PGNode *) n;
+		}
+	;
+
+pivot_value_list:	pivot_value
+				{
+					$$ = list_make1($1);
+				}
+			| pivot_value_list pivot_value
+				{
+					$$ = lappend($1, $2);
+				}
+		;
 
 /*
  * It may seem silly to separate joined_table from table_ref, but there is
@@ -954,6 +1080,7 @@ table_ref:	relation_expr opt_alias_clause opt_tablesample_clause
  * A NATURAL JOIN implicitly matches column names between
  * tables and the shape is determined by which columns are
  * in common. We'll collect columns during the later transformations.
+ * A POSITIONAL JOIN implicitly matches row numbers and is more like a table.
  */
 
 joined_table:
@@ -1028,6 +1155,50 @@ joined_table:
 					n->location = @2;
 					$$ = n;
 				}
+			| table_ref POSITIONAL JOIN table_ref
+				{
+					/* POSITIONAL JOIN is a coordinated scan */
+					PGJoinExpr *n = makeNode(PGJoinExpr);
+					n->jointype = PG_JOIN_POSITION;
+					n->isNatural = false;
+					n->larg = $1;
+					n->rarg = $4;
+					n->usingClause = NIL;
+					n->quals = NULL;
+					n->location = @2;
+					$$ = n;
+				}
+            | table_ref ANTI JOIN table_ref join_qual
+                {
+                    /* ANTI JOIN is a filter */
+                    PGJoinExpr *n = makeNode(PGJoinExpr);
+                    n->jointype = PG_JOIN_ANTI;
+                    n->isNatural = false;
+                    n->larg = $1;
+                    n->rarg = $4;
+                    if ($5 != NULL && IsA($5, PGList))
+                        n->usingClause = (PGList *) $5; /* USING clause */
+                    else
+                        n->quals = $5; /* ON clause */
+                    n->location = @2;
+                    $$ = n;
+                }
+           | table_ref SEMI JOIN table_ref join_qual
+               {
+                   /* SEMI JOIN is also a filter */
+                   PGJoinExpr *n = makeNode(PGJoinExpr);
+                   n->jointype = PG_JOIN_SEMI;
+                   n->isNatural = false;
+                   n->larg = $1;
+                   n->rarg = $4;
+                   if ($5 != NULL && IsA($5, PGList))
+                       n->usingClause = (PGList *) $5; /* USING clause */
+                   else
+                       n->quals = $5; /* ON clause */
+                   n->location = @2;
+                   n->location = @2;
+                   $$ = n;
+               }
 		;
 
 alias_clause:
@@ -1093,6 +1264,8 @@ func_alias_clause:
 join_type:	FULL join_outer							{ $$ = PG_JOIN_FULL; }
 			| LEFT join_outer						{ $$ = PG_JOIN_LEFT; }
 			| RIGHT join_outer						{ $$ = PG_JOIN_RIGHT; }
+			| SEMI          						{ $$ = PG_JOIN_SEMI; }
+			| ANTI          						{ $$ = PG_JOIN_ANTI; }
 			| INNER_P								{ $$ = PG_JOIN_INNER; }
 		;
 
@@ -2197,21 +2370,29 @@ a_expr:		c_expr									{ $$ = $1; }
 					n->location = @1;
 					$$ = (PGNode *)n;
 				}
-			| COLUMNS '(' '*' opt_except_list opt_replace_list ')'
+			| COLUMNS '(' a_expr ')'
 				{
 					PGAStar *star = makeNode(PGAStar);
-					star->except_list = $4;
-					star->replace_list = $5;
+					star->expr = $3;
 					star->columns = true;
-
+					star->location = @1;
 					$$ = (PGNode *) star;
 				}
-			| COLUMNS '(' Sconst ')'
+			| '*' opt_except_list opt_replace_list
 				{
 					PGAStar *star = makeNode(PGAStar);
-					star->regex = $3;
-					star->columns = true;
-
+					star->except_list = $2;
+					star->replace_list = $3;
+					star->location = @1;
+					$$ = (PGNode *) star;
+				}
+			| ColId '.' '*' opt_except_list opt_replace_list
+				{
+					PGAStar *star = makeNode(PGAStar);
+					star->relation = $1;
+					star->except_list = $4;
+					star->replace_list = $5;
+					star->location = @1;
 					$$ = (PGNode *) star;
 				}
 		;
@@ -2300,51 +2481,24 @@ c_expr:		columnref								{ $$ = $1; }
 					n->location = @1;
 					$$ = (PGNode *) n;
 				}
-			| '?' opt_indirection
+			| indirection_expr opt_extended_indirection
 				{
 					if ($2)
 					{
 						PGAIndirection *n = makeNode(PGAIndirection);
-						n->arg = makeParamRef(0, @1);
+						n->arg = (PGNode *) $1;
 						n->indirection = check_indirection($2, yyscanner);
 						$$ = (PGNode *) n;
 					}
 					else
-						$$ = makeParamRef(0, @1);
+						$$ = (PGNode *) $1;
 				}
-			| PARAM opt_indirection
+			| '$' named_param
 				{
-					PGParamRef *p = makeNode(PGParamRef);
-					p->number = $1;
-					p->location = @1;
-					if ($2)
-					{
-						PGAIndirection *n = makeNode(PGAIndirection);
-						n->arg = (PGNode *) p;
-						n->indirection = check_indirection($2, yyscanner);
-						$$ = (PGNode *) n;
-					}
-					else
-						$$ = (PGNode *) p;
-				}
-			| '(' a_expr ')' opt_indirection
-				{
-					if ($4)
-					{
-						PGAIndirection *n = makeNode(PGAIndirection);
-						n->arg = $2;
-						n->indirection = check_indirection($4, yyscanner);
-						$$ = (PGNode *)n;
-					}
-					else
-						$$ = $2;
+					$$ = makeNamedParamRef($2, @1);
 				}
 			| row {
 				PGFuncCall *n = makeFuncCall(SystemFuncName("row"), $1, @1);
-				$$ = (PGNode *) n;
-			}
-			| '{' dict_arguments_opt_comma '}' {
-				PGFuncCall *n = makeFuncCall(SystemFuncName("struct_pack"), $2, @2);
 				$$ = (PGNode *) n;
 			}
 			| '[' opt_expr_list_opt_comma ']' {
@@ -2372,18 +2526,6 @@ c_expr:		columnref								{ $$ = $1; }
 			}
 			| case_expr
 				{ $$ = $1; }
-			| func_expr opt_indirection
-				{
-					if ($2) {
-						PGAIndirection *n = makeNode(PGAIndirection);
-						n->arg = $1;
-						n->indirection = check_indirection($2, yyscanner);
-						$$ = (PGNode *)n;
-					}
-					else {
-						$$ = $1;
-					}
-				}
 			| select_with_parens			%prec UMINUS
 				{
 					PGSubLink *n = makeNode(PGSubLink);
@@ -2439,6 +2581,34 @@ c_expr:		columnref								{ $$ = $1; }
 			  }
 		;
 
+
+
+indirection_expr:		'?'
+				{
+					$$ = makeParamRef(0, @1);
+				}
+			| PARAM
+				{
+					PGParamRef *p = makeNode(PGParamRef);
+					p->number = $1;
+					p->location = @1;
+					$$ = (PGNode *) p;
+				}
+			| '(' a_expr ')'
+				{
+					$$ = $2;
+				}
+			| '{' dict_arguments_opt_comma '}'
+				{
+					PGFuncCall *f = makeFuncCall(SystemFuncName("struct_pack"), $2, @2);
+					$$ = (PGNode *) f;
+				}
+			| func_expr
+				{
+					$$ = $1;
+				}
+		;
+
 func_application:       func_name '(' ')'
 				{
 					$$ = (PGNode *) makeFuncCall($1, NIL, @1);
@@ -2483,22 +2653,6 @@ func_application:       func_name '(' ')'
 					n->agg_order = $5;
 					n->agg_ignore_nulls = $6;
 					n->agg_distinct = true;
-					$$ = (PGNode *)n;
-				}
-			| func_name '(' '*' ')'
-				{
-					/*
-					 * We consider AGGREGATE(*) to invoke a parameterless
-					 * aggregate.  This does the right thing for COUNT(*),
-					 * and there are no other aggregates in SQL that accept
-					 * '*' as parameter.
-					 *
-					 * The PGFuncCall node is also marked agg_star = true,
-					 * so that later processing can detect what the argument
-					 * really was.
-					 */
-					PGFuncCall *n = makeFuncCall($1, NIL, @1);
-					n->agg_star = true;
 					$$ = (PGNode *)n;
 				}
 		;
@@ -3371,6 +3525,52 @@ opt_indirection:
 			| opt_indirection indirection_el		{ $$ = lappend($1, $2); }
 		;
 
+opt_func_arguments:
+	/* empty */ 				{ $$ = NULL; }
+	| '(' ')'					{ $$ = list_make1(NULL); }
+	| '(' func_arg_list ')' 	{ $$ = $2; }
+	;
+
+extended_indirection_el:
+			'.' attr_name opt_func_arguments
+				{
+					if ($3) {
+						PGFuncCall *n = makeFuncCall(list_make1(makeString($2)), $3->head->data.ptr_value ? $3 : NULL, @2);
+						$$ = (PGNode *) n;
+					} else {
+						$$ = (PGNode *) makeString($2);
+					}
+				}
+			| '[' a_expr ']'
+				{
+					PGAIndices *ai = makeNode(PGAIndices);
+					ai->is_slice = false;
+					ai->lidx = NULL;
+					ai->uidx = $2;
+					$$ = (PGNode *) ai;
+				}
+			| '[' opt_slice_bound ':' opt_slice_bound ']'
+				{
+					PGAIndices *ai = makeNode(PGAIndices);
+					ai->is_slice = true;
+					ai->lidx = $2;
+					ai->uidx = $4;
+					$$ = (PGNode *) ai;
+				}
+		;
+
+extended_indirection:
+			extended_indirection_el									{ $$ = list_make1($1); }
+			| extended_indirection extended_indirection_el			{ $$ = lappend($1, $2); }
+		;
+
+opt_extended_indirection:
+			/*EMPTY*/												{ $$ = NIL; }
+			| opt_extended_indirection extended_indirection_el		{ $$ = lappend($1, $2); }
+		;
+
+
+
 opt_asymmetric: ASYMMETRIC
 			| /*EMPTY*/
 		;
@@ -3426,37 +3626,6 @@ target_el:	a_expr AS ColLabelOrString
 					$$->name = NULL;
 					$$->indirection = NIL;
 					$$->val = (PGNode *)$1;
-					$$->location = @1;
-				}
-			| '*' opt_except_list opt_replace_list
-				{
-					PGColumnRef *n = makeNode(PGColumnRef);
-					PGAStar *star = makeNode(PGAStar);
-					n->fields = list_make1(star);
-					n->location = @1;
-					star->except_list = $2;
-					star->replace_list = $3;
-
-					$$ = makeNode(PGResTarget);
-					$$->name = NULL;
-					$$->indirection = NIL;
-					$$->val = (PGNode *)n;
-					$$->location = @1;
-				}
-			| ColId '.' '*' opt_except_list opt_replace_list
-				{
-					PGColumnRef *n = makeNode(PGColumnRef);
-					PGAStar *star = makeNode(PGAStar);
-					n->fields = list_make1(star);
-					n->location = @1;
-					star->relation = $1;
-					star->except_list = $4;
-					star->replace_list = $5;
-
-					$$ = makeNode(PGResTarget);
-					$$->name = NULL;
-					$$->indirection = NIL;
-					$$->val = (PGNode *)n;
 					$$->location = @1;
 				}
 		;
@@ -3526,6 +3695,7 @@ qualified_name:
 							$$->schemaname = strVal(linitial($2));
 							$$->relname = strVal(lsecond($2));
 							break;
+						case 3:
 						default:
 							ereport(ERROR,
 									(errcode(PG_ERRCODE_SYNTAX_ERROR),
@@ -3547,6 +3717,11 @@ name_list:	name
 name_list_opt_comma:
 			name_list								{ $$ = $1; }
 			| name_list ','							{ $$ = $1; }
+		;
+
+name_list_opt_comma_opt_bracket:
+			name_list_opt_comma										{ $$ = $1; }
+			| '(' name_list_opt_comma ')'							{ $$ = $2; }
 		;
 
 name:		ColIdOrString							{ $$ = $1; };
@@ -3759,3 +3934,5 @@ ColLabel:	IDENT									{ $$ = $1; }
 ColLabelOrString:	ColLabel						{ $$ = $1; }
 					| SCONST						{ $$ = $1; }
 		;
+
+named_param: IDENT { $$ = $1; }

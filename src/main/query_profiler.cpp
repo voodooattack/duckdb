@@ -1,20 +1,23 @@
 #include "duckdb/main/query_profiler.hpp"
-#include "duckdb/common/to_string.hpp"
+
 #include "duckdb/common/fstream.hpp"
+#include "duckdb/common/http_state.hpp"
+#include "duckdb/common/limits.hpp"
 #include "duckdb/common/printer.hpp"
 #include "duckdb/common/string_util.hpp"
-#include "duckdb/execution/physical_operator.hpp"
-#include "duckdb/execution/operator/join/physical_delim_join.hpp"
-#include "duckdb/execution/operator/helper/physical_execute.hpp"
+#include "duckdb/common/to_string.hpp"
 #include "duckdb/common/tree_renderer.hpp"
-#include "duckdb/common/limits.hpp"
 #include "duckdb/execution/expression_executor.hpp"
-#include "duckdb/planner/expression/bound_function_expression.hpp"
+#include "duckdb/execution/operator/helper/physical_execute.hpp"
+#include "duckdb/execution/operator/join/physical_delim_join.hpp"
+#include "duckdb/execution/physical_operator.hpp"
 #include "duckdb/main/client_config.hpp"
 #include "duckdb/main/client_context.hpp"
 #include "duckdb/main/client_data.hpp"
-#include <utility>
+#include "duckdb/planner/expression/bound_function_expression.hpp"
+
 #include <algorithm>
+#include <utility>
 
 namespace duckdb {
 
@@ -63,7 +66,7 @@ void QueryProfiler::StartQuery(string query, bool is_explain_analyze, bool start
 		return;
 	}
 	this->running = true;
-	this->query = move(query);
+	this->query = std::move(query);
 	tree_map.clear();
 	root = nullptr;
 	phase_timings.clear();
@@ -308,7 +311,7 @@ void QueryProfiler::Flush(OperatorProfiler &profiler) {
 			if (int(entry->second->info.executors_info.size()) <= info_id) {
 				entry->second->info.executors_info.resize(info_id + 1);
 			}
-			entry->second->info.executors_info[info_id] = move(info);
+			entry->second->info.executors_info[info_id] = std::move(info);
 		}
 	}
 	profiler.timings.clear();
@@ -369,8 +372,36 @@ void QueryProfiler::QueryTreeToStream(std::ostream &ss) const {
 	ss << "│└───────────────────────────────────┘│\n";
 	ss << "└─────────────────────────────────────┘\n";
 	ss << StringUtil::Replace(query, "\n", " ") + "\n";
-	if (query.empty()) {
+
+	// checking the tree to ensure the query is really empty
+	// the query string is empty when a logical plan is deserialized
+	if (query.empty() && !root) {
 		return;
+	}
+
+	if (context.client_data->http_state && !context.client_data->http_state->IsEmpty()) {
+		string read =
+		    "in: " + StringUtil::BytesToHumanReadableString(context.client_data->http_state->total_bytes_received);
+		string written =
+		    "out: " + StringUtil::BytesToHumanReadableString(context.client_data->http_state->total_bytes_sent);
+		string head = "#HEAD: " + to_string(context.client_data->http_state->head_count);
+		string get = "#GET: " + to_string(context.client_data->http_state->get_count);
+		string put = "#PUT: " + to_string(context.client_data->http_state->put_count);
+		string post = "#POST: " + to_string(context.client_data->http_state->post_count);
+
+		constexpr idx_t TOTAL_BOX_WIDTH = 39;
+		ss << "┌─────────────────────────────────────┐\n";
+		ss << "│┌───────────────────────────────────┐│\n";
+		ss << "││            HTTP Stats:            ││\n";
+		ss << "││                                   ││\n";
+		ss << "││" + DrawPadded(read, TOTAL_BOX_WIDTH - 4) + "││\n";
+		ss << "││" + DrawPadded(written, TOTAL_BOX_WIDTH - 4) + "││\n";
+		ss << "││" + DrawPadded(head, TOTAL_BOX_WIDTH - 4) + "││\n";
+		ss << "││" + DrawPadded(get, TOTAL_BOX_WIDTH - 4) + "││\n";
+		ss << "││" + DrawPadded(put, TOTAL_BOX_WIDTH - 4) + "││\n";
+		ss << "││" + DrawPadded(post, TOTAL_BOX_WIDTH - 4) + "││\n";
+		ss << "│└───────────────────────────────────┘│\n";
+		ss << "└─────────────────────────────────────┘\n";
 	}
 
 	constexpr idx_t TOTAL_BOX_WIDTH = 39;
@@ -532,7 +563,7 @@ string QueryProfiler::ToJSON() const {
 	if (!IsEnabled()) {
 		return "{ \"result\": \"disabled\" }\n";
 	}
-	if (query.empty()) {
+	if (query.empty() && !root) {
 		return "{ \"result\": \"empty\" }\n";
 	}
 	if (!root) {
@@ -592,7 +623,7 @@ unique_ptr<QueryProfiler::TreeNode> QueryProfiler::CreateTree(PhysicalOperator *
 	auto children = root->GetChildren();
 	for (auto &child : children) {
 		auto child_node = CreateTree(child, depth + 1);
-		node->children.push_back(move(child_node));
+		node->children.push_back(std::move(child_node));
 	}
 	return node;
 }
@@ -644,7 +675,7 @@ void ExpressionInfo::ExtractExpressionsRecursive(unique_ptr<ExpressionState> &st
 			expr_info->tuples_count = child->profiler.tuples_count;
 		}
 		expr_info->ExtractExpressionsRecursive(child);
-		children.push_back(move(expr_info));
+		children.push_back(std::move(expr_info));
 	}
 	return;
 }
@@ -661,7 +692,7 @@ ExpressionRootInfo::ExpressionRootInfo(ExpressionExecutorState &state, string na
       sample_tuples_count(state.profiler.sample_tuples_count), tuples_count(state.profiler.tuples_count),
       name(state.name), time(state.profiler.time) {
 	// Use the name of expression-tree as extra-info
-	extra_info = move(name);
+	extra_info = std::move(name);
 	auto expression_info_p = make_unique<ExpressionInfo>();
 	// Maybe root has a function
 	if (state.root_state->expr.expression_class == ExpressionClass::BOUND_FUNCTION) {
@@ -672,6 +703,6 @@ ExpressionRootInfo::ExpressionRootInfo(ExpressionExecutorState &state, string na
 		expression_info_p->tuples_count = state.root_state->profiler.tuples_count;
 	}
 	expression_info_p->ExtractExpressionsRecursive(state.root_state);
-	root = move(expression_info_p);
+	root = std::move(expression_info_p);
 }
 } // namespace duckdb

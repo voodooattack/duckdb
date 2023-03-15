@@ -1,6 +1,8 @@
 #include "duckdb/parser/result_modifier.hpp"
 #include "duckdb/common/field_writer.hpp"
 #include "duckdb/parser/expression_util.hpp"
+#include "duckdb/common/serializer/format_serializer.hpp"
+#include "duckdb/common/serializer/format_deserializer.hpp"
 
 namespace duckdb {
 
@@ -16,6 +18,33 @@ void ResultModifier::Serialize(Serializer &serializer) const {
 	writer.WriteField<ResultModifierType>(type);
 	Serialize(writer);
 	writer.Finalize();
+}
+
+void ResultModifier::FormatSerialize(FormatSerializer &serializer) const {
+	serializer.WriteProperty("type", type);
+}
+
+std::unique_ptr<ResultModifier> ResultModifier::FormatDeserialize(FormatDeserializer &deserializer) {
+	auto type = deserializer.ReadProperty<ResultModifierType>("type");
+
+	unique_ptr<ResultModifier> result;
+	switch (type) {
+	case ResultModifierType::LIMIT_MODIFIER:
+		result = LimitModifier::FormatDeserialize(deserializer);
+		break;
+	case ResultModifierType::ORDER_MODIFIER:
+		result = OrderModifier::FormatDeserialize(deserializer);
+		break;
+	case ResultModifierType::DISTINCT_MODIFIER:
+		result = DistinctModifier::FormatDeserialize(deserializer);
+		break;
+	case ResultModifierType::LIMIT_PERCENT_MODIFIER:
+		result = LimitPercentModifier::FormatDeserialize(deserializer);
+		break;
+	default:
+		throw InternalException("Unrecognized ResultModifierType for Deserialization");
+	}
+	return result;
 }
 
 unique_ptr<ResultModifier> ResultModifier::Deserialize(Deserializer &source) {
@@ -65,7 +94,7 @@ unique_ptr<ResultModifier> LimitModifier::Copy() const {
 	if (offset) {
 		copy->offset = offset->Copy();
 	}
-	return move(copy);
+	return std::move(copy);
 }
 
 void LimitModifier::Serialize(FieldWriter &writer) const {
@@ -73,11 +102,21 @@ void LimitModifier::Serialize(FieldWriter &writer) const {
 	writer.WriteOptional(offset);
 }
 
+void LimitModifier::FormatSerialize(FormatSerializer &serializer) const {
+	ResultModifier::FormatSerialize(serializer);
+	serializer.WriteOptionalProperty("limit", limit);
+	serializer.WriteOptionalProperty("offset", offset);
+}
+
+unique_ptr<ResultModifier> LimitModifier::FormatDeserialize(FormatDeserializer &deserializer) {
+	throw NotImplementedException("err");
+}
+
 unique_ptr<ResultModifier> LimitModifier::Deserialize(FieldReader &reader) {
 	auto mod = make_unique<LimitModifier>();
 	mod->limit = reader.ReadOptional<ParsedExpression>(nullptr);
 	mod->offset = reader.ReadOptional<ParsedExpression>(nullptr);
-	return move(mod);
+	return std::move(mod);
 }
 
 bool DistinctModifier::Equals(const ResultModifier *other_p) const {
@@ -96,17 +135,27 @@ unique_ptr<ResultModifier> DistinctModifier::Copy() const {
 	for (auto &expr : distinct_on_targets) {
 		copy->distinct_on_targets.push_back(expr->Copy());
 	}
-	return move(copy);
+	return std::move(copy);
 }
 
 void DistinctModifier::Serialize(FieldWriter &writer) const {
 	writer.WriteSerializableList(distinct_on_targets);
 }
 
+void DistinctModifier::FormatSerialize(duckdb::FormatSerializer &serializer) const {
+	ResultModifier::FormatSerialize(serializer);
+	serializer.WriteProperty("distinct_on_targets", distinct_on_targets);
+}
+
+unique_ptr<ResultModifier> DistinctModifier::FormatDeserialize(FormatDeserializer &deserializer) {
+	auto mod = make_unique<DistinctModifier>();
+	throw NotImplementedException("");
+}
+
 unique_ptr<ResultModifier> DistinctModifier::Deserialize(FieldReader &reader) {
 	auto mod = make_unique<DistinctModifier>();
 	mod->distinct_on_targets = reader.ReadRequiredSerializableList<ParsedExpression>();
-	return move(mod);
+	return std::move(mod);
 }
 
 bool OrderModifier::Equals(const ResultModifier *other_p) const {
@@ -133,7 +182,7 @@ unique_ptr<ResultModifier> OrderModifier::Copy() const {
 	for (auto &order : orders) {
 		copy->orders.emplace_back(order.type, order.null_order, order.expression->Copy());
 	}
-	return move(copy);
+	return std::move(copy);
 }
 
 string OrderByNode::ToString() const {
@@ -170,23 +219,41 @@ void OrderByNode::Serialize(Serializer &serializer) const {
 	writer.Finalize();
 }
 
+void OrderByNode::FormatSerialize(FormatSerializer &serializer) const {
+	serializer.WriteProperty("type", type);
+	serializer.WriteProperty("null_order", null_order);
+	serializer.WriteProperty("expression", expression);
+}
+
+OrderByNode OrderByNode::FormatDeserialize(FormatDeserializer &deserializer) {
+	throw NotImplementedException("err");
+}
+
 OrderByNode OrderByNode::Deserialize(Deserializer &source) {
 	FieldReader reader(source);
 	auto type = reader.ReadRequired<OrderType>();
 	auto null_order = reader.ReadRequired<OrderByNullType>();
 	auto expression = reader.ReadRequiredSerializable<ParsedExpression>();
 	reader.Finalize();
-	return OrderByNode(type, null_order, move(expression));
+	return OrderByNode(type, null_order, std::move(expression));
 }
 
 void OrderModifier::Serialize(FieldWriter &writer) const {
 	writer.WriteRegularSerializableList(orders);
 }
 
+void OrderModifier::FormatSerialize(FormatSerializer &serializer) const {
+	ResultModifier::FormatSerialize(serializer);
+	serializer.WriteProperty("orders", orders);
+}
+unique_ptr<ResultModifier> OrderModifier::FormatDeserialize(FormatDeserializer &deserializer) {
+	throw NotImplementedException("err");
+}
+
 unique_ptr<ResultModifier> OrderModifier::Deserialize(FieldReader &reader) {
 	auto mod = make_unique<OrderModifier>();
 	mod->orders = reader.ReadRequiredSerializableList<OrderByNode, OrderByNode>();
-	return move(mod);
+	return std::move(mod);
 }
 
 bool LimitPercentModifier::Equals(const ResultModifier *other_p) const {
@@ -211,7 +278,7 @@ unique_ptr<ResultModifier> LimitPercentModifier::Copy() const {
 	if (offset) {
 		copy->offset = offset->Copy();
 	}
-	return move(copy);
+	return std::move(copy);
 }
 
 void LimitPercentModifier::Serialize(FieldWriter &writer) const {
@@ -219,11 +286,22 @@ void LimitPercentModifier::Serialize(FieldWriter &writer) const {
 	writer.WriteOptional(offset);
 }
 
+void LimitPercentModifier::FormatSerialize(FormatSerializer &serializer) const {
+	ResultModifier::FormatSerialize(serializer);
+	serializer.WriteProperty("limit", limit);
+	serializer.WriteProperty("offset", offset);
+}
+
 unique_ptr<ResultModifier> LimitPercentModifier::Deserialize(FieldReader &reader) {
 	auto mod = make_unique<LimitPercentModifier>();
 	mod->limit = reader.ReadOptional<ParsedExpression>(nullptr);
 	mod->offset = reader.ReadOptional<ParsedExpression>(nullptr);
-	return move(mod);
+	return std::move(mod);
+}
+
+unique_ptr<ResultModifier> LimitPercentModifier::FormatDeserialize(FormatDeserializer &deserializer) {
+	auto mod = make_unique<LimitPercentModifier>();
+	throw NotImplementedException("err");
 }
 
 } // namespace duckdb

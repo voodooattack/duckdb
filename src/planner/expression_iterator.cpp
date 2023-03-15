@@ -29,6 +29,11 @@ void ExpressionIterator::EnumerateChildren(Expression &expr,
 		if (aggr_expr.filter) {
 			callback(aggr_expr.filter);
 		}
+		if (aggr_expr.order_bys) {
+			for (auto &order : aggr_expr.order_bys->orders) {
+				callback(order.expression);
+			}
+		}
 		break;
 	}
 	case ExpressionClass::BOUND_BETWEEN: {
@@ -120,6 +125,7 @@ void ExpressionIterator::EnumerateChildren(Expression &expr,
 		break;
 	}
 	case ExpressionClass::BOUND_COLUMN_REF:
+	case ExpressionClass::BOUND_LAMBDA_REF:
 	case ExpressionClass::BOUND_CONSTANT:
 	case ExpressionClass::BOUND_DEFAULT:
 	case ExpressionClass::BOUND_PARAMETER:
@@ -144,12 +150,6 @@ void ExpressionIterator::EnumerateExpression(unique_ptr<Expression> &expr,
 void ExpressionIterator::EnumerateTableRefChildren(BoundTableRef &ref,
                                                    const std::function<void(Expression &child)> &callback) {
 	switch (ref.type) {
-	case TableReferenceType::CROSS_PRODUCT: {
-		auto &bound_crossproduct = (BoundCrossProductRef &)ref;
-		EnumerateTableRefChildren(*bound_crossproduct.left, callback);
-		EnumerateTableRefChildren(*bound_crossproduct.right, callback);
-		break;
-	}
 	case TableReferenceType::EXPRESSION_LIST: {
 		auto &bound_expr_list = (BoundExpressionListRef &)ref;
 		for (auto &expr_list : bound_expr_list.values) {
@@ -161,7 +161,9 @@ void ExpressionIterator::EnumerateTableRefChildren(BoundTableRef &ref,
 	}
 	case TableReferenceType::JOIN: {
 		auto &bound_join = (BoundJoinRef &)ref;
-		EnumerateExpression(bound_join.condition, callback);
+		if (bound_join.condition) {
+			EnumerateExpression(bound_join.condition, callback);
+		}
 		EnumerateTableRefChildren(*bound_join.left, callback);
 		EnumerateTableRefChildren(*bound_join.right, callback);
 		break;

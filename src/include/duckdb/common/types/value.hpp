@@ -23,6 +23,7 @@ class CastFunctionSet;
 class Deserializer;
 class Serializer;
 struct GetCastFunctionInput;
+struct ExtraValueInfo;
 
 //! The Value object holds a single arbitrary value of any type that can be
 //! stored in the database.
@@ -63,7 +64,7 @@ public:
 	// move assignment
 	DUCKDB_API Value &operator=(Value &&other) noexcept;
 
-	inline LogicalType &type() {
+	inline LogicalType &GetTypeMutable() {
 		return type_;
 	}
 	inline const LogicalType &type() const {
@@ -131,10 +132,6 @@ public:
 	                                  int32_t micros);
 	DUCKDB_API static Value INTERVAL(int32_t months, int32_t days, int64_t micros);
 	DUCKDB_API static Value INTERVAL(interval_t interval);
-	//! Creates a JSON Value
-	DUCKDB_API static Value JSON(const char *val);
-	DUCKDB_API static Value JSON(string_t val);
-	DUCKDB_API static Value JSON(string val);
 
 	// Create a enum Value from a specified uint value
 	DUCKDB_API static Value ENUM(uint64_t value, const LogicalType &original_type);
@@ -154,11 +151,11 @@ public:
 	//! Cannot be called with an empty list, use either EMPTYLIST or LIST with a type instead
 	DUCKDB_API static Value LIST(vector<Value> values);
 	//! Create a list value with the given entries
-	DUCKDB_API static Value LIST(LogicalType child_type, vector<Value> values);
+	DUCKDB_API static Value LIST(const LogicalType &child_type, vector<Value> values);
 	//! Create an empty list with the specified child-type
-	DUCKDB_API static Value EMPTYLIST(LogicalType child_type);
-	//! Create a map value from a (key, value) pair
-	DUCKDB_API static Value MAP(Value key, Value value);
+	DUCKDB_API static Value EMPTYLIST(const LogicalType &child_type);
+	//! Create a map value with the given entries
+	DUCKDB_API static Value MAP(const LogicalType &child_type, vector<Value> values);
 	//! Create a union value from a selected value and a tag from a set of alternatives.
 	DUCKDB_API static Value UNION(child_list_t<LogicalType> members, uint8_t tag, Value value);
 
@@ -169,6 +166,9 @@ public:
 	}
 	//! Creates a blob by casting a specified string to a blob (i.e. interpreting \x characters)
 	DUCKDB_API static Value BLOB(const string &data);
+	//! Creates a bitstring by casting a specified string to a bitstring
+	DUCKDB_API static Value BIT(const_data_ptr_t data, idx_t len);
+	DUCKDB_API static Value BIT(const string &data);
 
 	template <class T>
 	T GetValue() const {
@@ -222,8 +222,12 @@ public:
 	DUCKDB_API bool TryCastAs(ClientContext &context, const LogicalType &target_type, bool strict = false);
 	DUCKDB_API bool DefaultTryCastAs(const LogicalType &target_type, bool strict = false);
 
+	DUCKDB_API void Reinterpret(LogicalType new_type);
+
 	//! Serializes a Value to a stand-alone binary blob
 	DUCKDB_API void Serialize(Serializer &serializer) const;
+	DUCKDB_API void FormatSerialize(FormatSerializer &serializer) const;
+	DUCKDB_API static Value FormatDeserialize(FormatDeserializer &deserializer);
 	//! Deserializes a Value from a blob
 	DUCKDB_API static Value Deserialize(Deserializer &source);
 
@@ -278,9 +282,6 @@ private:
 	//! The logical of the value
 	LogicalType type_;
 
-#if DUCKDB_API_VERSION < DUCKDB_API_0_3_2
-public:
-#endif
 	//! Whether or not the value is NULL
 	bool is_null;
 
@@ -306,11 +307,7 @@ public:
 		interval_t interval;
 	} value_;
 
-	//! The value of the object, if it is of a variable size type
-	string str_value;
-
-	vector<Value> struct_value;
-	vector<Value> list_value;
+	shared_ptr<ExtraValueInfo> value_info_;
 
 private:
 	template <class T>
@@ -533,37 +530,6 @@ template <>
 DUCKDB_API timestamp_t Value::GetValueUnsafe() const;
 template <>
 DUCKDB_API interval_t Value::GetValueUnsafe() const;
-
-template <>
-DUCKDB_API int8_t &Value::GetReferenceUnsafe();
-template <>
-DUCKDB_API int16_t &Value::GetReferenceUnsafe();
-template <>
-DUCKDB_API int32_t &Value::GetReferenceUnsafe();
-template <>
-DUCKDB_API int64_t &Value::GetReferenceUnsafe();
-template <>
-DUCKDB_API hugeint_t &Value::GetReferenceUnsafe();
-template <>
-DUCKDB_API uint8_t &Value::GetReferenceUnsafe();
-template <>
-DUCKDB_API uint16_t &Value::GetReferenceUnsafe();
-template <>
-DUCKDB_API uint32_t &Value::GetReferenceUnsafe();
-template <>
-DUCKDB_API uint64_t &Value::GetReferenceUnsafe();
-template <>
-DUCKDB_API float &Value::GetReferenceUnsafe();
-template <>
-DUCKDB_API double &Value::GetReferenceUnsafe();
-template <>
-DUCKDB_API date_t &Value::GetReferenceUnsafe();
-template <>
-DUCKDB_API dtime_t &Value::GetReferenceUnsafe();
-template <>
-DUCKDB_API timestamp_t &Value::GetReferenceUnsafe();
-template <>
-DUCKDB_API interval_t &Value::GetReferenceUnsafe();
 
 template <>
 DUCKDB_API bool Value::IsNan(float input);

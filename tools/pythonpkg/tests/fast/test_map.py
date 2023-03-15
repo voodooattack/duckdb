@@ -25,7 +25,7 @@ class TestMap(object):
         # column type differs from bind
         def evil2(df):
             if len(df) == 0:
-                df['col0'] = df['col0'].astype('string')
+                df['col0'] = df['col0'].astype('int')
             return df
 
         # column name differs from bind
@@ -66,7 +66,7 @@ class TestMap(object):
         with pytest.raises(AttributeError):
             print(testrel.map(evil4).df())
 
-        with pytest.raises(duckdb.Error):
+        with pytest.raises(duckdb.InvalidInputException):
             print(testrel.map(evil5).df())
 
         # not a function
@@ -90,6 +90,16 @@ class TestMap(object):
         with pytest.raises(duckdb.InvalidInputException, match='Need a DataFrame with at least one column'):
             testrel.map(return_empty_df).df()
 
+    def test_map_with_object_column(self, duckdb_cursor):
+        def return_with_no_modification(df):
+            return df
+
+        # BLOB maps to 'object'
+        # when a dataframe with 'object' column is returned, we use the content to infer the type
+        # when the dataframe is empty, this results in NULL, which is not desirable
+        # in this case we assume the returned type should be the same as the input type
+        duckdb_cursor.values([b'1234']).map(return_with_no_modification).fetchall()
+
     def test_isse_3237(self, duckdb_cursor):
         def process(rel):
             def mapper(x):
@@ -108,5 +118,5 @@ class TestMap(object):
         df = pd.DataFrame({'date': pd.Series([date(2000,1,1), date(2000,1,2)], dtype="datetime64[us]"), 'days_to_add': [1,2]})
         rel = duckdb.from_df(df)
         rel = process(rel)
-        x = rel.execute().fetchdf()
+        x = rel.fetchdf()
         assert x['days_to_add'].to_numpy()[0] == 1

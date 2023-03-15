@@ -422,7 +422,7 @@ void RadixPartitioning::PartitionRowData(BufferManager &buffer_manager, const Ro
 //===--------------------------------------------------------------------===//
 RadixPartitionedColumnData::RadixPartitionedColumnData(ClientContext &context_p, vector<LogicalType> types_p,
                                                        idx_t radix_bits_p, idx_t hash_col_idx_p)
-    : PartitionedColumnData(PartitionedColumnDataType::RADIX, context_p, move(types_p)), radix_bits(radix_bits_p),
+    : PartitionedColumnData(PartitionedColumnDataType::RADIX, context_p, std::move(types_p)), radix_bits(radix_bits_p),
       hash_col_idx(hash_col_idx_p) {
 	D_ASSERT(hash_col_idx < types.size());
 	const auto num_partitions = RadixPartitioning::NumberOfPartitions(radix_bits);
@@ -435,6 +435,7 @@ RadixPartitionedColumnData::RadixPartitionedColumnData(ClientContext &context_p,
 
 RadixPartitionedColumnData::RadixPartitionedColumnData(const RadixPartitionedColumnData &other)
     : PartitionedColumnData(other), radix_bits(other.radix_bits), hash_col_idx(other.hash_col_idx) {
+
 	for (idx_t i = 0; i < RadixPartitioning::NumberOfPartitions(radix_bits); i++) {
 		partitions.emplace_back(CreatePartitionCollection(i));
 	}

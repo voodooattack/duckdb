@@ -24,8 +24,8 @@ MoveConstantsRule::MoveConstantsRule(ExpressionRewriter &rewriter) : Rule(rewrit
 	arithmetic->matchers.push_back(make_unique<ConstantExpressionMatcher>());
 	arithmetic->matchers.push_back(make_unique<ExpressionMatcher>());
 	arithmetic->policy = SetMatcher::Policy::SOME;
-	op->matchers.push_back(move(arithmetic));
-	root = move(op);
+	op->matchers.push_back(std::move(arithmetic));
+	root = std::move(op);
 }
 
 unique_ptr<Expression> MoveConstantsRule::Apply(LogicalOperator &op, vector<Expression *> &bindings, bool &changes_made,
@@ -58,10 +58,10 @@ unique_ptr<Expression> MoveConstantsRule::Apply(LogicalOperator &op, vector<Expr
 			// if the cast is not possible then the comparison is not possible
 			// for example, if we have x + 5 = 3, where x is an unsigned number, we will get x = -2
 			// since this is not possible we can remove the entire branch here
-			return ExpressionRewriter::ConstantOrNull(move(arithmetic->children[arithmetic_child_index]),
+			return ExpressionRewriter::ConstantOrNull(std::move(arithmetic->children[arithmetic_child_index]),
 			                                          Value::BOOLEAN(false));
 		}
-		outer_constant->value = move(result_value);
+		outer_constant->value = std::move(result_value);
 	} else if (op_type == "-") {
 		// [x - 1 COMP 10] O R [1 - x COMP 10]
 		// order matters in subtraction:
@@ -73,11 +73,14 @@ unique_ptr<Expression> MoveConstantsRule::Apply(LogicalOperator &op, vector<Expr
 			}
 			auto result_value = Value::HUGEINT(outer_value);
 			if (!result_value.DefaultTryCastAs(constant_type)) {
-				// if the cast is not possible then the comparison is not possible
-				return ExpressionRewriter::ConstantOrNull(move(arithmetic->children[arithmetic_child_index]),
+				// if the cast is not possible then an equality comparison is not possible
+				if (comparison->type != ExpressionType::COMPARE_EQUAL) {
+					return nullptr;
+				}
+				return ExpressionRewriter::ConstantOrNull(std::move(arithmetic->children[arithmetic_child_index]),
 				                                          Value::BOOLEAN(false));
 			}
-			outer_constant->value = move(result_value);
+			outer_constant->value = std::move(result_value);
 		} else {
 			// [1 - x COMP 10]
 			// change right side to 1-10=-9
@@ -86,14 +89,17 @@ unique_ptr<Expression> MoveConstantsRule::Apply(LogicalOperator &op, vector<Expr
 			}
 			auto result_value = Value::HUGEINT(inner_value);
 			if (!result_value.DefaultTryCastAs(constant_type)) {
-				// if the cast is not possible then the comparison is not possible
-				return ExpressionRewriter::ConstantOrNull(move(arithmetic->children[arithmetic_child_index]),
+				// if the cast is not possible then an equality comparison is not possible
+				if (comparison->type != ExpressionType::COMPARE_EQUAL) {
+					return nullptr;
+				}
+				return ExpressionRewriter::ConstantOrNull(std::move(arithmetic->children[arithmetic_child_index]),
 				                                          Value::BOOLEAN(false));
 			}
-			outer_constant->value = move(result_value);
+			outer_constant->value = std::move(result_value);
 			// in this case, we should also flip the comparison
 			// e.g. if we have [4 - x < 2] then we should have [x > 2]
-			comparison->type = FlipComparisionExpression(comparison->type);
+			comparison->type = FlipComparisonExpression(comparison->type);
 		}
 	} else {
 		D_ASSERT(op_type == "*");
@@ -114,7 +120,7 @@ unique_ptr<Expression> MoveConstantsRule::Apply(LogicalOperator &op, vector<Expr
 				// we know the values are not equal
 				// the result will be either FALSE or NULL (if COMPARE_EQUAL)
 				// or TRUE or NULL (if COMPARE_NOTEQUAL)
-				return ExpressionRewriter::ConstantOrNull(move(arithmetic->children[arithmetic_child_index]),
+				return ExpressionRewriter::ConstantOrNull(std::move(arithmetic->children[arithmetic_child_index]),
 				                                          Value::BOOLEAN(is_inequality));
 			} else {
 				// not cleanly divisible and we are doing > >= < <=, skip the simplification for now
@@ -123,26 +129,26 @@ unique_ptr<Expression> MoveConstantsRule::Apply(LogicalOperator &op, vector<Expr
 		}
 		if (inner_value < 0) {
 			// multiply by negative value, need to flip expression
-			comparison->type = FlipComparisionExpression(comparison->type);
+			comparison->type = FlipComparisonExpression(comparison->type);
 		}
 		// else divide the RHS by the LHS
 		// we need to do a range check on the cast even though we do a division
 		// because e.g. -128 / -1 = 128, which is out of range
 		auto result_value = Value::HUGEINT(outer_value / inner_value);
 		if (!result_value.DefaultTryCastAs(constant_type)) {
-			return ExpressionRewriter::ConstantOrNull(move(arithmetic->children[arithmetic_child_index]),
+			return ExpressionRewriter::ConstantOrNull(std::move(arithmetic->children[arithmetic_child_index]),
 			                                          Value::BOOLEAN(false));
 		}
-		outer_constant->value = move(result_value);
+		outer_constant->value = std::move(result_value);
 	}
 	// replace left side with x
 	// first extract x from the arithmetic expression
-	auto arithmetic_child = move(arithmetic->children[arithmetic_child_index]);
+	auto arithmetic_child = std::move(arithmetic->children[arithmetic_child_index]);
 	// then place in the comparison
 	if (comparison->left.get() == outer_constant) {
-		comparison->right = move(arithmetic_child);
+		comparison->right = std::move(arithmetic_child);
 	} else {
-		comparison->left = move(arithmetic_child);
+		comparison->left = std::move(arithmetic_child);
 	}
 	changes_made = true;
 	return nullptr;

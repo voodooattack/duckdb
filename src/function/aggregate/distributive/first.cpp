@@ -79,6 +79,7 @@ struct FirstFunctionString : public FirstFunctionBase {
 			}
 		} else {
 			state->is_set = true;
+			state->is_null = false;
 			if (value.IsInlined()) {
 				state->value = value;
 			} else {
@@ -321,9 +322,9 @@ template <bool LAST, bool SKIP_NULLS>
 unique_ptr<FunctionData> BindFirst(ClientContext &context, AggregateFunction &function,
                                    vector<unique_ptr<Expression>> &arguments) {
 	auto input_type = arguments[0]->return_type;
-	auto name = move(function.name);
+	auto name = std::move(function.name);
 	function = GetFirstOperator<LAST, SKIP_NULLS>(input_type);
-	function.name = move(name);
+	function.name = std::move(name);
 	if (function.bind) {
 		return function.bind(context, function, arguments);
 	} else {

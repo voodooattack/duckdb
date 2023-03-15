@@ -26,7 +26,7 @@ public:
 	// if the function takes a subquery as argument its in here
 	unique_ptr<SelectStatement> subquery;
 
-	// External dependencies of this table funcion
+	// External dependencies of this table function
 	unique_ptr<ExternalDependency> external_dependency;
 
 public:
@@ -40,5 +40,8 @@ public:
 	void Serialize(FieldWriter &serializer) const override;
 	//! Deserializes a blob back into a BaseTableRef
 	static unique_ptr<TableRef> Deserialize(FieldReader &source);
+
+	void FormatSerialize(FormatSerializer &serializer) const override;
+	static unique_ptr<TableRef> FormatDeserialize(FormatDeserializer &source);
 };
 } // namespace duckdb

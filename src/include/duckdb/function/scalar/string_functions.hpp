@@ -10,6 +10,7 @@
 
 #include "duckdb/function/function_set.hpp"
 #include "utf8proc.hpp"
+#include "duckdb/function/built_in_functions.hpp"
 
 namespace re2 {
 class RE2;
@@ -87,7 +88,8 @@ struct LengthFun {
 
 struct LikeFun {
 	static void RegisterFunction(BuiltinFunctions &set);
-	DUCKDB_API static bool Glob(const char *s, idx_t slen, const char *pattern, idx_t plen);
+	DUCKDB_API static bool Glob(const char *s, idx_t slen, const char *pattern, idx_t plen,
+	                            bool allow_question_mark = true);
 };
 
 struct LikeEscapeFun {
@@ -146,6 +148,10 @@ struct ReplaceFun {
 	static void RegisterFunction(BuiltinFunctions &set);
 };
 
+struct TranslateFun {
+	static void RegisterFunction(BuiltinFunctions &set);
+};
+
 struct RpadFun {
 	static void RegisterFunction(BuiltinFunctions &set);
 };
@@ -167,11 +173,19 @@ struct ContainsFun {
 	                  idx_t needle_size);
 };
 
+struct StartsWithFun {
+	static void RegisterFunction(BuiltinFunctions &set);
+};
+
 struct UnicodeFun {
 	static void RegisterFunction(BuiltinFunctions &set);
 };
 
 struct StringSplitFun {
+	static void RegisterFunction(BuiltinFunctions &set);
+};
+
+struct BarFun {
 	static void RegisterFunction(BuiltinFunctions &set);
 };
 

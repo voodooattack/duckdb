@@ -1,12 +1,15 @@
 #include "duckdb/storage/table/scan_state.hpp"
 #include "duckdb/storage/table/row_group.hpp"
 #include "duckdb/storage/table/column_segment.hpp"
-#include "duckdb/transaction/transaction.hpp"
+#include "duckdb/transaction/duck_transaction.hpp"
+#include "duckdb/storage/table/column_data.hpp"
+#include "duckdb/storage/table/row_group_collection.hpp"
+#include "duckdb/storage/table/row_group_segment_tree.hpp"
 
 namespace duckdb {
 
 void TableScanState::Initialize(vector<column_t> column_ids, TableFilterSet *table_filters) {
-	this->column_ids = move(column_ids);
+	this->column_ids = std::move(column_ids);
 	this->table_filters = table_filters;
 	if (table_filters) {
 		D_ASSERT(table_filters->filters.size() > 0);
@@ -35,7 +38,7 @@ void ColumnScanState::NextInternal(idx_t count) {
 	}
 	row_index += count;
 	while (row_index >= current->start + current->count) {
-		current = (ColumnSegment *)current->Next();
+		current = segment_tree->GetNextSegment(current);
 		initialized = false;
 		segment_checked = false;
 		if (!current) {
@@ -84,7 +87,7 @@ AdaptiveFilter *CollectionScanState::GetAdaptiveFilter() {
 	return parent.GetAdaptiveFilter();
 }
 
-bool CollectionScanState::Scan(Transaction &transaction, DataChunk &result) {
+bool CollectionScanState::Scan(DuckTransaction &transaction, DataChunk &result) {
 	auto current_row_group = row_group_state.row_group;
 	while (current_row_group) {
 		current_row_group->Scan(transaction, row_group_state, result);
@@ -92,7 +95,7 @@ bool CollectionScanState::Scan(Transaction &transaction, DataChunk &result) {
 			return true;
 		} else {
 			do {
-				current_row_group = row_group_state.row_group = (RowGroup *)current_row_group->Next();
+				current_row_group = row_group_state.row_group = row_groups->GetNextSegment(current_row_group);
 				if (current_row_group) {
 					bool scan_row_group = current_row_group->InitializeScan(row_group_state);
 					if (scan_row_group) {
@@ -106,6 +109,22 @@ bool CollectionScanState::Scan(Transaction &transaction, DataChunk &result) {
 	return false;
 }
 
+bool CollectionScanState::ScanCommitted(DataChunk &result, SegmentLock &l, TableScanType type) {
+	auto current_row_group = row_group_state.row_group;
+	while (current_row_group) {
+		current_row_group->ScanCommitted(row_group_state, result, type);
+		if (result.size() > 0) {
+			return true;
+		} else {
+			current_row_group = row_group_state.row_group = row_groups->GetNextSegment(l, current_row_group);
+			if (current_row_group) {
+				current_row_group->InitializeScan(row_group_state);
+			}
+		}
+	}
+	return false;
+}
+
 bool CollectionScanState::ScanCommitted(DataChunk &result, TableScanType type) {
 	auto current_row_group = row_group_state.row_group;
 	while (current_row_group) {
@@ -113,7 +132,7 @@ bool CollectionScanState::ScanCommitted(DataChunk &result, TableScanType type) {
 		if (result.size() > 0) {
 			return true;
 		} else {
-			current_row_group = row_group_state.row_group = (RowGroup *)current_row_group->Next();
+			current_row_group = row_group_state.row_group = row_groups->GetNextSegment(current_row_group);
 			if (current_row_group) {
 				current_row_group->InitializeScan(row_group_state);
 			}

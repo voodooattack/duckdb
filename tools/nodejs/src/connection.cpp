@@ -1,7 +1,9 @@
 #include "duckdb.hpp"
 #include "duckdb_node.hpp"
 #include "napi.h"
-
+#include "duckdb/parser/parser.hpp"
+#include "duckdb/parser/parsed_data/drop_info.hpp"
+#include "duckdb/parser/expression/cast_expression.hpp"
 #include <iostream>
 #include <thread>
 
@@ -211,7 +213,8 @@ void DuckDBNodeUDFLauncher(Napi::Env env, Napi::Function jsudf, std::nullptr_t *
 			auto data = ret.Get("data").As<Napi::Array>();
 			auto out = duckdb::FlatVector::GetData<duckdb::string_t>(*jsargs->result);
 			for (size_t i = 0; i < data.Length(); ++i) {
-				out[i] = duckdb::string_t(data.Get(i).ToString());
+				// Use the AddString method to save the memory into the StringHeap if it can't be inlined
+				out[i] = duckdb::StringVector::AddString(*jsargs->result, data.Get(i).ToString());
 			}
 			break;
 		}
@@ -242,6 +245,7 @@ struct RegisterUdfTask : public Task {
 			// here we can do only DuckDB stuff because we do not have a functioning env
 
 			// Flatten all args to simplify udfs
+			bool all_constant = args.AllConstant();
 			args.Flatten();
 
 			JSArgs jsargs;
@@ -256,6 +260,9 @@ struct RegisterUdfTask : public Task {
 			}
 			if (jsargs.error) {
 				jsargs.error.Throw();
+			}
+			if (all_constant) {
+				result.SetVectorType(duckdb::VectorType::CONSTANT_VECTOR);
 			}
 		};
 
@@ -320,10 +327,11 @@ struct UnregisterUdfTask : public Task {
 		auto &con = *connection.connection;
 		con.BeginTransaction();
 		auto &context = *con.context;
-		auto &catalog = duckdb::Catalog::GetCatalog(context);
+		auto &catalog = duckdb::Catalog::GetSystemCatalog(context);
 		duckdb::DropInfo info;
 		info.type = duckdb::CatalogType::SCALAR_FUNCTION_ENTRY;
 		info.name = name;
+		info.allow_drop_internal = true;
 		catalog.DropEntry(context, &info);
 		con.Commit();
 	}
@@ -363,7 +371,7 @@ struct ExecTask : public Task {
 			}
 
 			for (duckdb::idx_t i = 0; i < statements.size(); i++) {
-				auto res = connection.connection->Query(move(statements[i]));
+				auto res = connection.connection->Query(std::move(statements[i]));
 				if (res->HasError()) {
 					success = false;
 					error = res->GetErrorObject();
@@ -380,7 +388,7 @@ struct ExecTask : public Task {
 	void Callback() override {
 		auto env = object.Env();
 		Napi::HandleScope scope(env);
-		callback.Value().MakeCallback(object.Value(), {success ? env.Null() : Napi::String::New(env, error.Message())});
+		callback.Value().MakeCallback(object.Value(), {success ? env.Null() : Utils::CreateError(env, error)});
 	};
 
 	std::string sql;

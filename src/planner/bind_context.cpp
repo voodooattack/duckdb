@@ -12,7 +12,8 @@
 #include "duckdb/parser/tableref/table_function_ref.hpp"
 #include "duckdb/planner/bound_query_node.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
-#include "re2/re2.h"
+#include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
+#include "duckdb/planner/expression_binder/constant_binder.hpp"
 
 #include <algorithm>
 
@@ -43,7 +44,7 @@ vector<string> BindContext::GetSimilarBindings(const string &column_name) {
 	for (auto &kv : bindings) {
 		auto binding = kv.second.get();
 		for (auto &name : binding->names) {
-			idx_t distance = StringUtil::LevenshteinDistance(name, column_name);
+			idx_t distance = StringUtil::SimilarityScore(name, column_name);
 			scores.emplace_back(binding->alias + "." + name, distance);
 		}
 	}
@@ -55,7 +56,7 @@ void BindContext::AddUsingBinding(const string &column_name, UsingColumnSet *set
 }
 
 void BindContext::AddUsingBindingSet(unique_ptr<UsingColumnSet> set) {
-	using_column_sets.push_back(move(set));
+	using_column_sets.push_back(std::move(set));
 }
 
 bool BindContext::FindUsingBinding(const string &column_name, unordered_set<UsingColumnSet *> **out) {
@@ -191,23 +192,26 @@ static bool ColumnIsGenerated(Binding *binding, column_t index) {
 	}
 	D_ASSERT(catalog_entry->type == CatalogType::TABLE_ENTRY);
 	auto table_entry = (TableCatalogEntry *)catalog_entry;
-	return table_entry->columns.GetColumn(LogicalIndex(index)).Generated();
+	return table_entry->GetColumn(LogicalIndex(index)).Generated();
 }
 
-unique_ptr<ParsedExpression> BindContext::CreateColumnReference(const string &schema_name, const string &table_name,
-                                                                const string &column_name) {
+unique_ptr<ParsedExpression> BindContext::CreateColumnReference(const string &catalog_name, const string &schema_name,
+                                                                const string &table_name, const string &column_name) {
 	string error_message;
 	vector<string> names;
+	if (!catalog_name.empty()) {
+		names.push_back(catalog_name);
+	}
 	if (!schema_name.empty()) {
 		names.push_back(schema_name);
 	}
 	names.push_back(table_name);
 	names.push_back(column_name);
 
-	auto result = make_unique<ColumnRefExpression>(move(names));
+	auto result = make_unique<ColumnRefExpression>(std::move(names));
 	auto binding = GetBinding(table_name, error_message);
 	if (!binding) {
-		return move(result);
+		return std::move(result);
 	}
 	auto column_index = binding->GetBindingIndex(column_name);
 	if (ColumnIsGenerated(binding, column_index)) {
@@ -217,7 +221,13 @@ unique_ptr<ParsedExpression> BindContext::CreateColumnReference(const string &sc
 		// as it appears in the binding itself
 		result->alias = binding->names[column_index];
 	}
-	return move(result);
+	return std::move(result);
+}
+
+unique_ptr<ParsedExpression> BindContext::CreateColumnReference(const string &schema_name, const string &table_name,
+                                                                const string &column_name) {
+	string catalog_name;
+	return CreateColumnReference(catalog_name, schema_name, table_name, column_name);
 }
 
 Binding *BindContext::GetCTEBinding(const string &ctename) {
@@ -303,37 +313,21 @@ bool BindContext::CheckExclusionList(StarExpression &expr, Binding *binding, con
 		auto new_entry = entry->second->Copy();
 		new_entry->alias = entry->first;
 		excluded_columns.insert(entry->first);
-		new_select_list.push_back(move(new_entry));
+		new_select_list.push_back(std::move(new_entry));
 		return true;
 	}
 	return false;
 }
 
-bool CheckRegex(const string &column_name, duckdb_re2::RE2 *regex) {
-	if (!regex) {
-		return true;
-	}
-	return RE2::PartialMatch(column_name, *regex);
-}
-
 void BindContext::GenerateAllColumnExpressions(StarExpression &expr,
                                                vector<unique_ptr<ParsedExpression>> &new_select_list) {
 	if (bindings_list.empty()) {
-		throw BinderException("SELECT * expression without FROM clause!");
+		throw BinderException("* expression without FROM clause!");
 	}
 	case_insensitive_set_t excluded_columns;
 	if (expr.relation_name.empty()) {
 		// SELECT * case
 		// bind all expressions of each table in-order
-		unique_ptr<duckdb_re2::RE2> regex;
-		bool found_match = true;
-		if (!expr.regex.empty()) {
-			regex = make_unique<duckdb_re2::RE2>(expr.regex);
-			if (!regex->error().empty()) {
-				throw BinderException("Failed to compile regex \"%s\": %s", expr.regex, regex->error());
-			}
-			found_match = false;
-		}
 		unordered_set<UsingColumnSet *> handled_using_columns;
 		for (auto &entry : bindings_list) {
 			auto binding = entry.second;
@@ -341,10 +335,6 @@ void BindContext::GenerateAllColumnExpressions(StarExpression &expr,
 				if (CheckExclusionList(expr, binding, column_name, new_select_list, excluded_columns)) {
 					continue;
 				}
-				if (!CheckRegex(column_name, regex.get())) {
-					continue;
-				}
-				found_match = true;
 				// check if this column is a USING column
 				auto using_binding = GetUsingBinding(column_name, binding->alias);
 				if (using_binding) {
@@ -362,7 +352,7 @@ void BindContext::GenerateAllColumnExpressions(StarExpression &expr,
 							coalesce->children.push_back(make_unique<ColumnRefExpression>(column_name, child_binding));
 						}
 						coalesce->alias = column_name;
-						new_select_list.push_back(move(coalesce));
+						new_select_list.push_back(std::move(coalesce));
 					} else {
 						// primary binding: output the qualified column ref
 						new_select_list.push_back(
@@ -373,9 +363,6 @@ void BindContext::GenerateAllColumnExpressions(StarExpression &expr,
 				}
 				new_select_list.push_back(make_unique<ColumnRefExpression>(column_name, binding->alias));
 			}
-		}
-		if (!found_match) {
-			throw BinderException("No matching columns found that match regex \"%s\"", expr.regex);
 		}
 	} else {
 		// SELECT tbl.* case
@@ -439,13 +426,13 @@ void BindContext::AddBinding(const string &alias, unique_ptr<Binding> binding) {
 		throw BinderException("Duplicate alias \"%s\" in query!", alias);
 	}
 	bindings_list.emplace_back(alias, binding.get());
-	bindings[alias] = move(binding);
+	bindings[alias] = std::move(binding);
 }
 
 void BindContext::AddBaseTable(idx_t index, const string &alias, const vector<string> &names,
                                const vector<LogicalType> &types, vector<column_t> &bound_column_ids,
-                               StandardEntry *entry) {
-	AddBinding(alias, make_unique<TableBinding>(alias, types, names, bound_column_ids, entry, index, true));
+                               StandardEntry *entry, bool add_row_id) {
+	AddBinding(alias, make_unique<TableBinding>(alias, types, names, bound_column_ids, entry, index, add_row_id));
 }
 
 void BindContext::AddTableFunction(idx_t index, const string &alias, const vector<string> &names,
@@ -458,7 +445,7 @@ static string AddColumnNameToBinding(const string &base_name, case_insensitive_s
 	idx_t index = 1;
 	string name = base_name;
 	while (current_names.find(name) != current_names.end()) {
-		name = base_name + ":" + to_string(index++);
+		name = base_name + ":" + std::to_string(index++);
 	}
 	current_names.insert(name);
 	return name;
@@ -517,7 +504,7 @@ void BindContext::AddCTEBinding(idx_t index, const string &alias, const vector<s
 	if (cte_bindings.find(alias) != cte_bindings.end()) {
 		throw BinderException("Duplicate alias \"%s\" in query!", alias);
 	}
-	cte_bindings[alias] = move(binding);
+	cte_bindings[alias] = std::move(binding);
 	cte_references[alias] = std::make_shared<idx_t>(0);
 }
 
@@ -526,10 +513,10 @@ void BindContext::AddContext(BindContext other) {
 		if (bindings.find(binding.first) != bindings.end()) {
 			throw BinderException("Duplicate alias \"%s\" in query!", binding.first);
 		}
-		bindings[binding.first] = move(binding.second);
+		bindings[binding.first] = std::move(binding.second);
 	}
 	for (auto &binding : other.bindings_list) {
-		bindings_list.push_back(move(binding));
+		bindings_list.push_back(std::move(binding));
 	}
 	for (auto &entry : other.using_columns) {
 		for (auto &alias : entry.second) {
@@ -542,6 +529,22 @@ void BindContext::AddContext(BindContext other) {
 #endif
 			using_columns[entry.first].insert(alias);
 		}
+	}
+}
+
+void BindContext::RemoveContext(vector<std::pair<string, duckdb::Binding *>> &other_bindings_list) {
+	for (auto &other_binding : other_bindings_list) {
+		if (bindings.find(other_binding.first) != bindings.end()) {
+			bindings.erase(other_binding.first);
+		}
+	}
+
+	vector<idx_t> delete_list_indexes;
+	for (auto &other_binding : other_bindings_list) {
+		auto it =
+		    std::remove_if(bindings_list.begin(), bindings_list.end(),
+		                   [other_binding](std::pair<string, Binding *> &x) { return x.first == other_binding.first; });
+		bindings_list.erase(it, bindings_list.end());
 	}
 }
 

@@ -48,9 +48,9 @@ PartitionableHashTable::PartitionableHashTable(ClientContext &context, Allocator
                                                RadixPartitionInfo &partition_info_p, vector<LogicalType> group_types_p,
                                                vector<LogicalType> payload_types_p,
                                                vector<BoundAggregateExpression *> bindings_p)
-    : context(context), allocator(allocator), group_types(move(group_types_p)), payload_types(move(payload_types_p)),
-      bindings(move(bindings_p)), is_partitioned(false), partition_info(partition_info_p), hashes(LogicalType::HASH),
-      hashes_subset(LogicalType::HASH) {
+    : context(context), allocator(allocator), group_types(std::move(group_types_p)),
+      payload_types(std::move(payload_types_p)), bindings(std::move(bindings_p)), is_partitioned(false),
+      partition_info(partition_info_p), hashes(LogicalType::HASH), hashes_subset(LogicalType::HASH) {
 
 	sel_vectors.resize(partition_info.n_partitions);
 	sel_vector_sizes.resize(partition_info.n_partitions);
@@ -62,6 +62,18 @@ PartitionableHashTable::PartitionableHashTable(ClientContext &context, Allocator
 	for (hash_t r = 0; r < partition_info.n_partitions; r++) {
 		sel_vectors[r].Initialize();
 	}
+
+	RowLayout layout;
+	layout.Initialize(group_types, AggregateObject::CreateAggregateObjects(bindings));
+	tuple_size = layout.GetRowWidth();
+}
+
+HtEntryType PartitionableHashTable::GetHTEntrySize() {
+	// we need at least STANDARD_VECTOR_SIZE entries to fit in the hash table
+	if (GroupedAggregateHashTable::GetMaxCapacity(HtEntryType::HT_WIDTH_32, tuple_size) < STANDARD_VECTOR_SIZE) {
+		return HtEntryType::HT_WIDTH_64;
+	}
+	return HtEntryType::HT_WIDTH_32;
 }
 
 idx_t PartitionableHashTable::ListAddChunk(HashTableList &list, DataChunk &groups, Vector &group_hashes,
@@ -74,7 +86,7 @@ idx_t PartitionableHashTable::ListAddChunk(HashTableList &list, DataChunk &group
 			list.back()->Finalize();
 		}
 		list.push_back(make_unique<GroupedAggregateHashTable>(context, allocator, group_types, payload_types, bindings,
-		                                                      HtEntryType::HT_WIDTH_32));
+		                                                      GetHTEntrySize()));
 	}
 	return list.back()->AddChunk(groups, group_hashes, payload, filter);
 }
@@ -141,7 +153,7 @@ void PartitionableHashTable::Partition() {
 	for (auto &unpartitioned_ht : unpartitioned_hts) {
 		for (idx_t r = 0; r < partition_info.n_partitions; r++) {
 			radix_partitioned_hts[r].push_back(make_unique<GroupedAggregateHashTable>(
-			    context, allocator, group_types, payload_types, bindings, HtEntryType::HT_WIDTH_32));
+			    context, allocator, group_types, payload_types, bindings, GetHTEntrySize()));
 			partition_hts[r] = radix_partitioned_hts[r].back().get();
 		}
 		unpartitioned_ht->Partition(partition_hts, partition_info.radix_mask, partition_info.RADIX_SHIFT);
@@ -159,11 +171,11 @@ HashTableList PartitionableHashTable::GetPartition(idx_t partition) {
 	D_ASSERT(IsPartitioned());
 	D_ASSERT(partition < partition_info.n_partitions);
 	D_ASSERT(radix_partitioned_hts.size() > partition);
-	return move(radix_partitioned_hts[partition]);
+	return std::move(radix_partitioned_hts[partition]);
 }
 HashTableList PartitionableHashTable::GetUnpartitioned() {
 	D_ASSERT(!IsPartitioned());
-	return move(unpartitioned_hts);
+	return std::move(unpartitioned_hts);
 }
 
 void PartitionableHashTable::Finalize() {

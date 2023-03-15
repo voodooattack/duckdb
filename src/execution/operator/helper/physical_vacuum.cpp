@@ -3,12 +3,13 @@
 #include "duckdb/planner/operator/logical_get.hpp"
 #include "duckdb/storage/data_table.hpp"
 #include "duckdb/storage/statistics/distinct_statistics.hpp"
+#include "duckdb/catalog/catalog_entry/table_catalog_entry.hpp"
 
 namespace duckdb {
 
 PhysicalVacuum::PhysicalVacuum(unique_ptr<VacuumInfo> info_p, idx_t estimated_cardinality)
     : PhysicalOperator(PhysicalOperatorType::VACUUM, {LogicalType::BOOLEAN}, estimated_cardinality),
-      info(move(info_p)) {
+      info(std::move(info_p)) {
 }
 
 class VacuumLocalSinkState : public LocalSinkState {
@@ -48,6 +49,9 @@ SinkResultType PhysicalVacuum::Sink(ExecutionContext &context, GlobalSinkState &
 	D_ASSERT(lstate.column_distinct_stats.size() == info->column_id_map.size());
 
 	for (idx_t col_idx = 0; col_idx < input.data.size(); col_idx++) {
+		if (!DistinctStatistics::TypeIsSupported(input.data[col_idx].GetType())) {
+			continue;
+		}
 		lstate.column_distinct_stats[col_idx]->Update(input.data[col_idx], input.size(), false);
 	}
 
@@ -71,9 +75,8 @@ SinkFinalizeType PhysicalVacuum::Finalize(Pipeline &pipeline, Event &event, Clie
 
 	auto table = info->table;
 	for (idx_t col_idx = 0; col_idx < sink.column_distinct_stats.size(); col_idx++) {
-		table->storage->SetStatistics(info->column_id_map.at(col_idx), [&](BaseStatistics &stats) {
-			stats.distinct_stats = move(sink.column_distinct_stats[col_idx]);
-		});
+		table->GetStorage().SetDistinct(info->column_id_map.at(col_idx),
+		                                std::move(sink.column_distinct_stats[col_idx]));
 	}
 
 	return SinkFinalizeType::READY;

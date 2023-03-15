@@ -9,7 +9,7 @@ bool SQLLogicParser::OpenFile(const string &path) {
 	this->file_name = path;
 
 	std::ifstream infile(file_name);
-	if (infile.bad()) {
+	if (infile.bad() || infile.fail()) {
 		return false;
 	}
 
@@ -142,7 +142,7 @@ SQLLogicToken SQLLogicParser::Tokenize() {
 	}
 	result.type = CommandToToken(argument_list[0]);
 	for (idx_t i = 1; i < argument_list.size(); i++) {
-		result.parameters.push_back(move(argument_list[i]));
+		result.parameters.push_back(std::move(argument_list[i]));
 	}
 	return result;
 }
@@ -163,6 +163,7 @@ bool SQLLogicParser::IsSingleLineStatement(SQLLogicToken &token) {
 	case SQLLogicTokenType::SQLLOGIC_REQUIRE_ENV:
 	case SQLLogicTokenType::SQLLOGIC_LOAD:
 	case SQLLogicTokenType::SQLLOGIC_RESTART:
+	case SQLLogicTokenType::SQLLOGIC_RECONNECT:
 		return true;
 
 	case SQLLogicTokenType::SQLLOGIC_SKIP_IF:
@@ -212,6 +213,8 @@ SQLLogicTokenType SQLLogicParser::CommandToToken(const string &token) {
 		return SQLLogicTokenType::SQLLOGIC_LOAD;
 	} else if (token == "restart") {
 		return SQLLogicTokenType::SQLLOGIC_RESTART;
+	} else if (token == "reconnect") {
+		return SQLLogicTokenType::SQLLOGIC_RECONNECT;
 	}
 	Fail("Unrecognized parameter %s", token);
 	return SQLLogicTokenType::SQLLOGIC_INVALID;

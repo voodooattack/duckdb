@@ -48,6 +48,12 @@ public class DuckDBResultSetMetaData implements ResultSetMetaData {
 			return DuckDBColumnType.DECIMAL;
 		} else if (type_name.equals("TIMESTAMP WITH TIME ZONE")) {
 			return DuckDBColumnType.TIMESTAMP_WITH_TIME_ZONE;
+		} else if (type_name.endsWith("[]")) {
+			return DuckDBColumnType.LIST;
+		} else if (type_name.startsWith("STRUCT")) {
+			return DuckDBColumnType.STRUCT;
+		} else if (type_name.startsWith("MAP")) {
+			return DuckDBColumnType.MAP;
 		} else {
 			return DuckDBColumnType.valueOf(type_name);
 		}
@@ -105,6 +111,7 @@ public class DuckDBResultSetMetaData implements ResultSetMetaData {
 		case UINTEGER:
 		case UBIGINT:
 		case INTERVAL:
+		case MAP:
 			return Types.JAVA_OBJECT;
 		case FLOAT:
 			return Types.FLOAT;
@@ -253,12 +260,14 @@ public class DuckDBResultSetMetaData implements ResultSetMetaData {
 		return "";
 	}
 
+	@Override
 	public <T> T unwrap(Class<T> iface) throws SQLException {
-		throw new SQLFeatureNotSupportedException("unwrap");
+		return JdbcUtils.unwrap(this, iface);
 	}
 
-	public boolean isWrapperFor(Class<?> iface) throws SQLException {
-		throw new SQLFeatureNotSupportedException("isWrapperFor");
+	@Override
+	public boolean isWrapperFor(Class<?> iface) {
+		return iface.isInstance(this);
 	}
 
 	private DuckDBColumnTypeMetaData typeMetadataForColumn(int columnIndex) throws SQLException {

@@ -38,6 +38,7 @@ public:
 
 public:
 	BoundOrderByNode Copy() const;
+	bool Equals(const BoundOrderByNode &other) const;
 	string ToString() const;
 
 	void Serialize(Serializer &serializer) const;
@@ -64,6 +65,9 @@ public:
 
 	//! List of order nodes
 	vector<BoundOrderByNode> orders;
+
+	unique_ptr<BoundOrderModifier> Copy() const;
+	static bool Equals(const BoundOrderModifier *left, const BoundOrderModifier *right);
 };
 
 class BoundDistinctModifier : public BoundResultModifier {
