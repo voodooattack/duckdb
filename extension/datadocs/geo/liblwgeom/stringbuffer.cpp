@@ -1,3 +1,28 @@
+/**********************************************************************
+ *
+ * PostGIS - Spatial Types for PostgreSQL
+ * http://postgis.net
+ *
+ * PostGIS is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * PostGIS is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with PostGIS.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ **********************************************************************
+ *
+ * Copyright 2002 Thamer Alharbash
+ * Copyright 2009 Paul Ramsey <pramsey@cleverelephant.ca>
+ *
+ **********************************************************************/
+
 #include "liblwgeom/stringbuffer.hpp"
 
 #include <cstring>
@@ -64,6 +89,15 @@ char *stringbuffer_getstringcopy(stringbuffer_t *s) {
 	memcpy(str, s->str_start, size);
 	str[size - 1] = '\0';
 	return str;
+}
+
+lwvarlena_t *stringbuffer_getvarlenacopy(stringbuffer_t *s) {
+	size_t size = (s->str_end - s->str_start);
+	lwvarlena_t *output = (lwvarlena_t *)lwalloc(size + LWVARHDRSZ);
+	LWSIZE_SET(output->size, size + LWVARHDRSZ);
+
+	memcpy(output->data, s->str_start, size);
+	return output;
 }
 
 /**

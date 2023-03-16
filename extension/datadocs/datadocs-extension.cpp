@@ -1,7 +1,5 @@
 #define DUCKDB_EXTENSION_MAIN
 
-#include "duckdb.hpp"
-
 #include "datadocs-extension.hpp"
 
 namespace duckdb {

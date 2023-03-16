@@ -1,3 +1,28 @@
+/**********************************************************************
+ *
+ * PostGIS - Spatial Types for PostgreSQL
+ * http://postgis.net
+ *
+ * PostGIS is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * PostGIS is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with PostGIS.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ **********************************************************************
+ *
+ * Copyright (C) 2012 Sandro Santilli <strk@kbt.io>
+ * Copyright (C) 2001-2006 Refractions Research Inc.
+ *
+ **********************************************************************/
+
 #include "liblwgeom/liblwgeom_internal.hpp"
 #include "liblwgeom/lwinline.hpp"
 
@@ -21,9 +46,10 @@ LWPOLY *lwpoly_construct(int32_t srid, GBOX *bbox, uint32_t nrings, POINTARRAY *
 	uint32_t i;
 #endif
 
-	if (nrings < 1)
-		// lwerror("lwpoly_construct: need at least 1 ring");
+	if (nrings < 1) {
+		lwerror("lwpoly_construct: need at least 1 ring");
 		return nullptr;
+	}
 
 	hasz = FLAGS_GET_Z(points[0]->flags);
 	hasm = FLAGS_GET_M(points[0]->flags);
@@ -31,9 +57,10 @@ LWPOLY *lwpoly_construct(int32_t srid, GBOX *bbox, uint32_t nrings, POINTARRAY *
 #ifdef CHECK_POLY_RINGS_ZM
 	zm = FLAGS_GET_ZM(points[0]->flags);
 	for (i = 1; i < nrings; i++) {
-		if (zm != FLAGS_GET_ZM(points[i]->flags))
-			// lwerror("lwpoly_construct: mixed dimensioned rings");
+		if (zm != FLAGS_GET_ZM(points[i]->flags)) {
+			lwerror("lwpoly_construct: mixed dimensioned rings");
 			return nullptr;
+		}
 	}
 #endif
 
@@ -48,6 +75,21 @@ LWPOLY *lwpoly_construct(int32_t srid, GBOX *bbox, uint32_t nrings, POINTARRAY *
 	result->bbox = bbox;
 
 	return result;
+}
+
+LWPOLY *lwpoly_construct_rectangle(char hasz, char hasm, POINT4D *p1, POINT4D *p2, POINT4D *p3, POINT4D *p4) {
+	POINTARRAY *pa = ptarray_construct_empty(hasz, hasm, 5);
+	LWPOLY *lwpoly = lwpoly_construct_empty(SRID_UNKNOWN, hasz, hasm);
+
+	ptarray_append_point(pa, p1, LW_TRUE);
+	ptarray_append_point(pa, p2, LW_TRUE);
+	ptarray_append_point(pa, p3, LW_TRUE);
+	ptarray_append_point(pa, p4, LW_TRUE);
+	ptarray_append_point(pa, p1, LW_TRUE);
+
+	lwpoly_add_ring(lwpoly, pa);
+
+	return lwpoly;
 }
 
 LWPOLY *lwpoly_construct_empty(int32_t srid, char hasz, char hasm) {
@@ -135,6 +177,114 @@ int lwpoly_add_ring(LWPOLY *poly, POINTARRAY *pa) {
 	poly->nrings++;
 
 	return LW_SUCCESS;
+}
+
+/*
+ * Construct a polygon from a LWLINE being
+ * the shell and an array of LWLINE (possibly NULL) being holes.
+ * Pointarrays from intput geoms are cloned.
+ * SRID must be the same for each input line.
+ * Input lines must have at least 4 points, and be closed.
+ */
+LWPOLY *lwpoly_from_lwlines(const LWLINE *shell, uint32_t nholes, const LWLINE **holes) {
+	uint32_t nrings;
+	POINTARRAY **rings = (POINTARRAY **)lwalloc((nholes + 1) * sizeof(POINTARRAY *));
+	int32_t srid = shell->srid;
+	LWPOLY *ret;
+
+	if (shell->points->npoints < 4) {
+		lwerror("lwpoly_from_lwlines: shell must have at least 4 points");
+		return nullptr;
+	}
+	if (!ptarray_is_closed_2d(shell->points)) {
+		lwerror("lwpoly_from_lwlines: shell must be closed");
+		return nullptr;
+	}
+	rings[0] = ptarray_clone_deep(shell->points);
+
+	for (nrings = 1; nrings <= nholes; nrings++) {
+		const LWLINE *hole = holes[nrings - 1];
+
+		if (hole->srid != srid) {
+			lwerror("lwpoly_from_lwlines: mixed SRIDs in input lines");
+			return nullptr;
+		}
+
+		if (hole->points->npoints < 4) {
+			lwerror("lwpoly_from_lwlines: holes must have at least 4 points");
+			return nullptr;
+		}
+		if (!ptarray_is_closed_2d(hole->points)) {
+			lwerror("lwpoly_from_lwlines: holes must be closed");
+			return nullptr;
+		}
+
+		rings[nrings] = ptarray_clone_deep(hole->points);
+	}
+
+	ret = lwpoly_construct(srid, NULL, nrings, rings);
+	return ret;
+}
+
+int lwpoly_is_closed(const LWPOLY *poly) {
+	uint32_t i = 0;
+
+	if (poly->nrings == 0)
+		return LW_TRUE;
+
+	for (i = 0; i < poly->nrings; i++) {
+		if (FLAGS_GET_Z(poly->flags)) {
+			if (!ptarray_is_closed_3d(poly->rings[i]))
+				return LW_FALSE;
+		} else {
+			if (!ptarray_is_closed_2d(poly->rings[i]))
+				return LW_FALSE;
+		}
+	}
+
+	return LW_TRUE;
+}
+
+/**
+ * Find the area of the outer ring - sum (area of inner rings).
+ */
+double lwpoly_area(const LWPOLY *poly) {
+	double poly_area = 0.0;
+	uint32_t i;
+
+	if (!poly)
+		lwerror("lwpoly_area called with null polygon pointer!");
+
+	for (i = 0; i < poly->nrings; i++) {
+		POINTARRAY *ring = poly->rings[i];
+		double ringarea = 0.0;
+
+		/* Empty or messed-up ring. */
+		if (ring->npoints < 3)
+			continue;
+
+		ringarea = fabs(ptarray_signed_area(ring));
+		if (i == 0) /* Outer ring, positive area! */
+			poly_area += ringarea;
+		else /* Inner ring, negative area! */
+			poly_area -= ringarea;
+	}
+
+	return poly_area;
+}
+
+/**
+ * Compute the sum of polygon rings length (forcing 2d computation).
+ * Could use a more numerically stable calculator...
+ */
+double lwpoly_perimeter_2d(const LWPOLY *poly) {
+	double result = 0.0;
+	uint32_t i;
+
+	for (i = 0; i < poly->nrings; i++)
+		result += ptarray_length_2d(poly->rings[i]);
+
+	return result;
 }
 
 } // namespace duckdb

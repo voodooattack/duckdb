@@ -1,3 +1,27 @@
+/**********************************************************************
+ *
+ * PostGIS - Spatial Types for PostgreSQL
+ * http://postgis.net
+ *
+ * PostGIS is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * PostGIS is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with PostGIS.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ **********************************************************************
+ *
+ * Copyright 2009 Paul Ramsey <pramsey@cleverelephant.ca>
+ *
+ **********************************************************************/
+
 #include "liblwgeom/liblwgeom.hpp"
 #include "liblwgeom/liblwgeom_internal.hpp"
 #include "liblwgeom/lwinline.hpp"
@@ -16,6 +40,12 @@ GBOX *gbox_new(lwflags_t flags) {
 
 void gbox_init(GBOX *gbox) {
 	memset(gbox, 0, sizeof(GBOX));
+}
+
+GBOX *gbox_clone(const GBOX *gbox) {
+	GBOX *g = (GBOX *)lwalloc(sizeof(GBOX));
+	memcpy(g, gbox, sizeof(GBOX));
+	return g;
 }
 
 int gbox_merge(const GBOX *new_box, GBOX *merge_box) {
@@ -55,6 +85,39 @@ GBOX *gbox_copy(const GBOX *box) {
 	return copy;
 }
 
+int gbox_overlaps(const GBOX *g1, const GBOX *g2) {
+	/* Make sure our boxes are consistent */
+	if (FLAGS_GET_GEODETIC(g1->flags) != FLAGS_GET_GEODETIC(g2->flags))
+		lwerror("gbox_overlaps: cannot compare geodetic and non-geodetic boxes");
+
+	/* Check X/Y first */
+	if (g1->xmax < g2->xmin || g1->ymax < g2->ymin || g1->xmin > g2->xmax || g1->ymin > g2->ymax)
+		return LW_FALSE;
+
+	/* Deal with the geodetic case special: we only compare the geodetic boxes (x/y/z) */
+	/* Never the M dimension */
+	if (FLAGS_GET_GEODETIC(g1->flags) && FLAGS_GET_GEODETIC(g2->flags)) {
+		if (g1->zmax < g2->zmin || g1->zmin > g2->zmax)
+			return LW_FALSE;
+		else
+			return LW_TRUE;
+	}
+
+	/* If both geodetic or both have Z, check Z */
+	if (FLAGS_GET_Z(g1->flags) && FLAGS_GET_Z(g2->flags)) {
+		if (g1->zmax < g2->zmin || g1->zmin > g2->zmax)
+			return LW_FALSE;
+	}
+
+	/* If both have M, check M */
+	if (FLAGS_GET_M(g1->flags) && FLAGS_GET_M(g2->flags)) {
+		if (g1->mmax < g2->mmin || g1->mmin > g2->mmax)
+			return LW_FALSE;
+	}
+
+	return LW_TRUE;
+}
+
 int gbox_init_point3d(const POINT3D *p, GBOX *gbox) {
 	gbox->xmin = gbox->xmax = p->x;
 	gbox->ymin = gbox->ymax = p->y;
@@ -86,6 +149,26 @@ int gbox_merge_point3d(const POINT3D *p, GBOX *gbox) {
 	return LW_SUCCESS;
 }
 
+int gbox_contains_2d(const GBOX *g1, const GBOX *g2) {
+	if ((g2->xmin < g1->xmin) || (g2->xmax > g1->xmax) || (g2->ymin < g1->ymin) || (g2->ymax > g1->ymax)) {
+		return LW_FALSE;
+	}
+	return LW_TRUE;
+}
+
+int gbox_overlaps_2d(const GBOX *g1, const GBOX *g2) {
+
+	/* Make sure our boxes are consistent */
+	if (FLAGS_GET_GEODETIC(g1->flags) != FLAGS_GET_GEODETIC(g2->flags))
+		lwerror("gbox_overlaps: cannot compare geodetic and non-geodetic boxes");
+
+	/* Check X/Y first */
+	if (g1->xmax < g2->xmin || g1->ymax < g2->ymin || g1->xmin > g2->xmax || g1->ymin > g2->ymax)
+		return LW_FALSE;
+
+	return LW_TRUE;
+}
+
 void gbox_duplicate(const GBOX *original, GBOX *duplicate) {
 	assert(duplicate);
 	assert(original);
@@ -97,6 +180,15 @@ size_t gbox_serialized_size(lwflags_t flags) {
 		return 6 * sizeof(float);
 	else
 		return 2 * FLAGS_NDIMS(flags) * sizeof(float);
+}
+
+int gbox_same_2d_float(const GBOX *g1, const GBOX *g2) {
+	if ((g1->xmax == g2->xmax || next_float_up(g1->xmax) == next_float_up(g2->xmax)) &&
+	    (g1->ymax == g2->ymax || next_float_up(g1->ymax) == next_float_up(g2->ymax)) &&
+	    (g1->xmin == g2->xmin || next_float_down(g1->xmin) == next_float_down(g1->xmin)) &&
+	    (g1->ymin == g2->ymin || next_float_down(g2->ymin) == next_float_down(g2->ymin)))
+		return LW_TRUE;
+	return LW_FALSE;
 }
 
 /* ********************************************************************************
@@ -350,8 +442,26 @@ int lwgeom_calculate_gbox_cartesian(const LWGEOM *lwgeom, GBOX *gbox) {
 		// Need to do with postgis
 	}
 	/* Never get here, please. */
-	// lwerror("unsupported type (%d) - %s", lwgeom->type, lwtype_name(lwgeom->type));
+	lwerror("unsupported type (%d) - %s", lwgeom->type, lwtype_name(lwgeom->type));
 	return LW_FAILURE;
+}
+
+void gbox_float_round(GBOX *gbox) {
+	gbox->xmin = next_float_down(gbox->xmin);
+	gbox->xmax = next_float_up(gbox->xmax);
+
+	gbox->ymin = next_float_down(gbox->ymin);
+	gbox->ymax = next_float_up(gbox->ymax);
+
+	if (FLAGS_GET_M(gbox->flags)) {
+		gbox->mmin = next_float_down(gbox->mmin);
+		gbox->mmax = next_float_up(gbox->mmax);
+	}
+
+	if (FLAGS_GET_Z(gbox->flags)) {
+		gbox->zmin = next_float_down(gbox->zmin);
+		gbox->zmax = next_float_up(gbox->zmax);
+	}
 }
 
 } // namespace duckdb

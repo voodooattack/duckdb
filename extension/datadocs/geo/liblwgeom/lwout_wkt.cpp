@@ -1,4 +1,28 @@
-#include "liblwgeom/lwgeom_wkt.hpp"
+/**********************************************************************
+ *
+ * PostGIS - Spatial Types for PostgreSQL
+ * http://postgis.net
+ *
+ * PostGIS is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * PostGIS is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with PostGIS.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ **********************************************************************
+ *
+ * Copyright (C) 2009 Paul Ramsey <pramsey@cleverelephant.ca>
+ *
+ **********************************************************************/
+
+#include "liblwgeom/lwin_wkt.hpp"
 #include "liblwgeom/lwinline.hpp"
 #include "liblwgeom/stringbuffer.hpp"
 
@@ -281,7 +305,7 @@ static void lwcompound_to_wkt_sb(const LWCOMPOUND *comp, stringbuffer_t *sb, int
 		else if (type == CIRCSTRINGTYPE) {
 			lwcircstring_to_wkt_sb((LWCIRCSTRING *)comp->geoms[i], sb, precision, variant);
 		} else {
-			// lwerror("lwcompound_to_wkt_sb: Unknown type received %d - %s", type, lwtype_name(type));
+			lwerror("lwcompound_to_wkt_sb: Unknown type received %d - %s", type, lwtype_name(type));
 			return;
 		}
 	}
@@ -324,7 +348,7 @@ static void lwcurvepoly_to_wkt_sb(const LWCURVEPOLY *cpoly, stringbuffer_t *sb, 
 			lwcompound_to_wkt_sb((LWCOMPOUND *)cpoly->rings[i], sb, precision, variant);
 			break;
 		default:
-			// lwerror("lwcurvepoly_to_wkt_sb: Unknown type received %d - %s", type, lwtype_name(type));
+			lwerror("lwcurvepoly_to_wkt_sb: Unknown type received %d - %s", type, lwtype_name(type));
 			return;
 		}
 	}
@@ -367,7 +391,7 @@ static void lwmcurve_to_wkt_sb(const LWMCURVE *mcurv, stringbuffer_t *sb, int pr
 			lwcompound_to_wkt_sb((LWCOMPOUND *)mcurv->geoms[i], sb, precision, variant);
 			break;
 		default:
-			// lwerror("lwmcurve_to_wkt_sb: Unknown type received %d - %s", type, lwtype_name(type));
+			lwerror("lwmcurve_to_wkt_sb: Unknown type received %d - %s", type, lwtype_name(type));
 			return;
 		}
 	}
@@ -475,7 +499,7 @@ static void lwmsurface_to_wkt_sb(const LWMSURFACE *msurf, stringbuffer_t *sb, in
 			lwcurvepoly_to_wkt_sb((LWCURVEPOLY *)msurf->geoms[i], sb, precision, variant);
 			break;
 		default:
-			// lwerror("lwmsurface_to_wkt_sb: Unknown type received %d - %s", type, lwtype_name(type));
+			lwerror("lwmsurface_to_wkt_sb: Unknown type received %d - %s", type, lwtype_name(type));
 			return;
 		}
 	}
@@ -561,10 +585,10 @@ static void lwgeom_to_wkt_sb(const LWGEOM *geom, stringbuffer_t *sb, int precisi
 		lwtin_to_wkt_sb((LWTIN *)geom, sb, precision, variant);
 		break;
 
-	default:
-		// lwerror("lwgeom_to_wkt_sb: Type %d - %s unsupported.",
-		//         geom->type, lwtype_name(geom->type));
+	default: {
+		lwerror("lwgeom_to_wkt_sb: Type %d - %s unsupported.", geom->type, lwtype_name(geom->type));
 		return;
+	}
 	}
 }
 
@@ -579,7 +603,7 @@ static stringbuffer_t *lwgeom_to_wkt_internal(const LWGEOM *geom, uint8_t varian
 	}
 	lwgeom_to_wkt_sb(geom, sb, precision, variant);
 	if (stringbuffer_getstring(sb) == NULL) {
-		// lwerror("Uh oh");
+		lwerror("Uh oh");
 		return NULL;
 	}
 	return sb;
@@ -605,6 +629,15 @@ char *lwgeom_to_wkt(const LWGEOM *geom, uint8_t variant, int precision, size_t *
 		*size_out = stringbuffer_getlength(sb) + 1;
 	stringbuffer_destroy(sb);
 	return str;
+}
+
+lwvarlena_t *lwgeom_to_wkt_varlena(const LWGEOM *geom, uint8_t variant, int precision) {
+	stringbuffer_t *sb = lwgeom_to_wkt_internal(geom, variant, precision);
+	if (!sb)
+		return NULL;
+	lwvarlena_t *output = stringbuffer_getvarlenacopy(sb);
+	stringbuffer_destroy(sb);
+	return output;
 }
 
 } // namespace duckdb

@@ -1,3 +1,28 @@
+/**********************************************************************
+ *
+ * PostGIS - Spatial Types for PostgreSQL
+ * http://postgis.net
+ *
+ * PostGIS is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * PostGIS is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with PostGIS.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ **********************************************************************
+ *
+ * Copyright 2001-2003 Refractions Research Inc.
+ * Copyright 2009-2010 Olivier Courtin <olivier.courtin@oslandia.com>
+ *
+ **********************************************************************/
+
 #include "liblwgeom/liblwgeom_internal.hpp"
 #include "liblwgeom/lwinline.hpp"
 
@@ -553,9 +578,10 @@ static size_t asgeojson_geom_size(const LWGEOM *geom, GBOX *bbox, int precision)
 		return asgeojson_multiline_size((LWMLINE *)geom, NULL, bbox, precision);
 	case MULTIPOLYGONTYPE:
 		return asgeojson_multipolygon_size((LWMPOLY *)geom, NULL, bbox, precision);
-	default:
+	default: {
 		lwerror("GeoJson: geometry not supported.");
 		return 0;
+	}
 	}
 }
 
@@ -594,10 +620,10 @@ lwvarlena_t *lwgeom_to_geojson(const LWGEOM *geom, const char *srs, int precisio
 		return asgeojson_collection((LWCOLLECTION *)geom, srs, bbox, precision);
 		// Need to do with postgis
 
-	default:
-		// lwerror("lwgeom_to_geojson: '%s' geometry type not supported",
-		//         lwtype_name(type));
+	default: {
+		lwerror("lwgeom_to_geojson: '%s' geometry type not supported", lwtype_name(type));
 		return NULL;
+	}
 	}
 
 	/* Never get here */
@@ -637,10 +663,11 @@ static size_t asgeojson_geom_buf(const LWGEOM *geom, char *output, GBOX *bbox, i
 		ptr += asgeojson_multipolygon_buf((LWMPOLY *)geom, NULL, ptr, bbox, precision);
 		break;
 
-	default:
+	default: {
 		if (bbox)
 			lwfree(bbox);
 		lwerror("GeoJson: geometry not supported.");
+	}
 	}
 
 	return (ptr - output);

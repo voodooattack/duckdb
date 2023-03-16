@@ -48,6 +48,11 @@ lwflags_t gserialized1_get_lwflags(const GSERIALIZED *g);
 int gserialized1_has_bbox(const GSERIALIZED *gser);
 
 /**
+ * Check if a #GSERIALIZED has a Z ordinate.
+ */
+int gserialized1_has_z(const GSERIALIZED *gser);
+
+/**
  * Extract the SRID from the serialized form (it is packed into
  * three bytes so this is a handy function).
  */
@@ -80,5 +85,14 @@ uint32_t gserialized1_get_type(const GSERIALIZED *g);
 LWGEOM *lwgeom_from_gserialized1(const GSERIALIZED *g);
 
 int gserialized1_peek_first_point(const GSERIALIZED *g, POINT4D *out_point);
+
+int gserialized1_peek_gbox_p(const GSERIALIZED *g, GBOX *gbox);
+
+/**
+ * Read the box from the #GSERIALIZED or calculate it if necessary.
+ * Return #LWFAILURE if box cannot be calculated (NULL or EMPTY
+ * input).
+ */
+int gserialized1_get_gbox_p(const GSERIALIZED *g, GBOX *gbox);
 
 } // namespace duckdb

@@ -1,3 +1,28 @@
+/**********************************************************************
+ *
+ * PostGIS - Spatial Types for PostgreSQL
+ * http://postgis.net
+ *
+ * PostGIS is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * PostGIS is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with PostGIS.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ **********************************************************************
+ *
+ * Copyright 2001-2006 Refractions Research Inc.
+ * Copyright 2017 Darafei Praliaskouski <me@komzpa.net>
+ *
+ **********************************************************************/
+
 #include "liblwgeom/liblwgeom.hpp"
 #include "liblwgeom/liblwgeom_internal.hpp"
 #include "liblwgeom/lwinline.hpp"
@@ -47,7 +72,7 @@ float next_float_up(double d) {
  */
 int getPoint2d_p(const POINTARRAY *pa, uint32_t n, POINT2D *point) {
 	if (!pa) {
-		// lwerror("%s [%d] NULL POINTARRAY input", __FILE__, __LINE__);
+		lwerror("%s [%d] NULL POINTARRAY input", __FILE__, __LINE__);
 		return 0;
 	}
 
@@ -90,6 +115,56 @@ void ptarray_set_point4d(POINTARRAY *pa, uint32_t n, const POINT4D *p4d) {
 	}
 }
 
+void ptarray_copy_point(POINTARRAY *pa, uint32_t from, uint32_t to) {
+	int ndims = FLAGS_NDIMS(pa->flags);
+	switch (ndims) {
+	case 2: {
+		POINT2D *p_from = (POINT2D *)(getPoint_internal(pa, from));
+		POINT2D *p_to = (POINT2D *)(getPoint_internal(pa, to));
+		*p_to = *p_from;
+		return;
+	}
+	case 3: {
+		POINT3D *p_from = (POINT3D *)(getPoint_internal(pa, from));
+		POINT3D *p_to = (POINT3D *)(getPoint_internal(pa, to));
+		*p_to = *p_from;
+		return;
+	}
+	case 4: {
+		POINT4D *p_from = (POINT4D *)(getPoint_internal(pa, from));
+		POINT4D *p_to = (POINT4D *)(getPoint_internal(pa, to));
+		*p_to = *p_from;
+		return;
+	}
+	default: {
+		lwerror("%s: unsupported number of dimensions - %d", __func__, ndims);
+		return;
+	}
+	}
+	return;
+}
+
+/************************************************************************
+ * POINTARRAY support functions
+ *
+ * TODO: should be moved to ptarray.c probably
+ *
+ ************************************************************************/
+
+/*
+ * Copies a point from the point array into the parameter point
+ * will set point's z=NO_Z_VALUE if pa is 2d
+ * will set point's m=NO_M_VALUE if pa is 3d or 2d
+ *
+ * NOTE: point is a real POINT3D *not* a pointer
+ */
+POINT4D
+getPoint4d(const POINTARRAY *pa, uint32_t n) {
+	POINT4D result;
+	getPoint4d_p(pa, n, &result);
+	return result;
+}
+
 /*
  * Copies a point from the point array into the parameter point
  * will set point's z=NO_Z_VALUE  if pa is 2d
@@ -104,7 +179,7 @@ int getPoint4d_p(const POINTARRAY *pa, uint32_t n, POINT4D *op) {
 	int zmflag;
 
 	if (!pa) {
-		// lwerror("%s [%d] NULL POINTARRAY input", __FILE__, __LINE__);
+		lwerror("%s [%d] NULL POINTARRAY input", __FILE__, __LINE__);
 		return 0;
 	}
 
@@ -140,7 +215,7 @@ int getPoint4d_p(const POINTARRAY *pa, uint32_t n, POINT4D *op) {
 		break;
 
 	default:
-		// lwerror("Unknown ZM flag ??");
+		lwerror("Unknown ZM flag ??");
 		return 0;
 	}
 	return 1;

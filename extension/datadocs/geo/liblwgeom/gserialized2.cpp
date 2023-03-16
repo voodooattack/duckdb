@@ -1,5 +1,31 @@
+/**********************************************************************
+ *
+ * PostGIS - Spatial Types for PostgreSQL
+ * http://postgis.net
+ *
+ * PostGIS is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * PostGIS is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with PostGIS.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ **********************************************************************
+ *
+ * Copyright 2009 Paul Ramsey <pramsey@cleverelephant.ca>
+ * Copyright 2017 Darafei Praliaskouski <me@komzpa.net>
+ *
+ **********************************************************************/
+
 #include "liblwgeom/gserialized2.hpp"
 
+#include "liblwgeom/gserialized.hpp"
 #include "liblwgeom/liblwgeom_internal.hpp"
 
 #include <cassert>
@@ -201,6 +227,10 @@ int gserialized2_has_bbox(const GSERIALIZED *g) {
 
 int gserialized2_has_extended(const GSERIALIZED *g) {
 	return G2FLAGS_GET_EXTENDED(g->gflags);
+}
+
+int gserialized2_has_z(const GSERIALIZED *g) {
+	return G2FLAGS_GET_Z(g->gflags);
 }
 
 /* Public function */
@@ -522,7 +552,7 @@ static LWCOLLECTION *lwcollection_from_gserialized2_buffer(uint8_t *data_ptr, lw
 		size_t subsize = 0;
 
 		if (!lwcollection_allows_subtype(type, subtype)) {
-			// lwerror("Invalid subtype (%s) for collection type (%s)", lwtype_name(subtype), lwtype_name(type));
+			lwerror("Invalid subtype (%s) for collection type (%s)", lwtype_name(subtype), lwtype_name(type));
 			lwfree(collection);
 			return NULL;
 		}
@@ -567,9 +597,10 @@ LWGEOM *lwgeom_from_gserialized2_buffer(uint8_t *data_ptr, lwflags_t lwflags, si
 		return (LWGEOM *)lwcollection_from_gserialized2_buffer(data_ptr, lwflags, g_size, srid);
 		// Need to do with postgis
 
-	default:
-		// lwerror("Unknown geometry type: %d - %s", type, lwtype_name(type));
+	default: {
+		lwerror("Unknown geometry type: %d - %s", type, lwtype_name(type));
 		return NULL;
+	}
 	}
 }
 
@@ -684,9 +715,10 @@ static size_t gserialized2_from_any_size(const LWGEOM *geom) {
 	case COLLECTIONTYPE:
 		return gserialized2_from_lwcollection_size((LWCOLLECTION *)geom);
 	// Need to do with postgis
-	default:
-		// lwerror("Unknown geometry type: %d - %s", geom->type, lwtype_name(geom->type));
+	default: {
+		lwerror("Unknown geometry type: %d - %s", geom->type, lwtype_name(geom->type));
 		return 0;
+	}
 	}
 }
 
@@ -716,9 +748,10 @@ static size_t gserialized2_from_lwpoint(const LWPOINT *point, uint8_t *buf) {
 	assert(point);
 	assert(buf);
 
-	if (FLAGS_GET_ZM(point->flags) != FLAGS_GET_ZM(point->point->flags))
-		// lwerror("Dimensions mismatch in lwpoint");
+	if (FLAGS_GET_ZM(point->flags) != FLAGS_GET_ZM(point->point->flags)) {
+		lwerror("Dimensions mismatch in lwpoint");
 		return 0;
+	}
 
 	loc = buf;
 
@@ -747,9 +780,10 @@ static size_t gserialized2_from_lwline(const LWLINE *line, uint8_t *buf) {
 	assert(line);
 	assert(buf);
 
-	if (FLAGS_GET_Z(line->flags) != FLAGS_GET_Z(line->points->flags))
-		// lwerror("Dimensions mismatch in lwline");
+	if (FLAGS_GET_Z(line->flags) != FLAGS_GET_Z(line->points->flags)) {
+		lwerror("Dimensions mismatch in lwline");
 		return 0;
+	}
 
 	ptsize = ptarray_point_size(line->points);
 
@@ -810,9 +844,10 @@ static size_t gserialized2_from_lwpoly(const LWPOLY *poly, uint8_t *buf) {
 		POINTARRAY *pa = poly->rings[i];
 		size_t pasize;
 
-		if (FLAGS_GET_ZM(poly->flags) != FLAGS_GET_ZM(pa->flags))
-			// lwerror("Dimensions mismatch in lwpoly");
+		if (FLAGS_GET_ZM(poly->flags) != FLAGS_GET_ZM(pa->flags)) {
+			lwerror("Dimensions mismatch in lwpoly");
 			return 0;
+		}
 
 		pasize = pa->npoints * ptsize;
 		if (pa->npoints > 0)
@@ -831,9 +866,10 @@ static size_t gserialized2_from_lwtriangle(const LWTRIANGLE *triangle, uint8_t *
 	assert(triangle);
 	assert(buf);
 
-	if (FLAGS_GET_ZM(triangle->flags) != FLAGS_GET_ZM(triangle->points->flags))
-		// lwerror("Dimensions mismatch in lwtriangle");
+	if (FLAGS_GET_ZM(triangle->flags) != FLAGS_GET_ZM(triangle->points->flags)) {
+		lwerror("Dimensions mismatch in lwtriangle");
 		return 0;
+	}
 
 	ptsize = ptarray_point_size(triangle->points);
 
@@ -866,9 +902,10 @@ static size_t gserialized2_from_lwcircstring(const LWCIRCSTRING *curve, uint8_t 
 	assert(curve);
 	assert(buf);
 
-	if (FLAGS_GET_ZM(curve->flags) != FLAGS_GET_ZM(curve->points->flags))
-		// lwerror("Dimensions mismatch in lwcircstring");
+	if (FLAGS_GET_ZM(curve->flags) != FLAGS_GET_ZM(curve->points->flags)) {
+		lwerror("Dimensions mismatch in lwcircstring");
 		return 0;
+	}
 
 	ptsize = ptarray_point_size(curve->points);
 	loc = buf;
@@ -919,9 +956,10 @@ LWGEOM *lwgeom_from_gserialized2(const GSERIALIZED *g) {
 
 	lwgeom = lwgeom_from_gserialized2_buffer(data_ptr, lwflags, &size, srid);
 
-	if (!lwgeom)
-		// lwerror("%s: unable create geometry", __func__); /* Ooops! */
+	if (!lwgeom) {
+		lwerror("%s: unable create geometry", __func__); /* Ooops! */
 		return NULL;
+	}
 
 	lwgeom->type = lwtype;
 	lwgeom->flags = lwflags;
@@ -959,9 +997,10 @@ static size_t gserialized2_from_lwcollection(const LWCOLLECTION *coll, uint8_t *
 
 	/* Serialize subgeoms. */
 	for (i = 0; i < coll->ngeoms; i++) {
-		if (FLAGS_GET_ZM(coll->flags) != FLAGS_GET_ZM(coll->geoms[i]->flags))
-			// lwerror("Dimensions mismatch in lwcollection");
+		if (FLAGS_GET_ZM(coll->flags) != FLAGS_GET_ZM(coll->geoms[i]->flags)) {
+			lwerror("Dimensions mismatch in lwcollection");
 			return 0;
+		}
 		subsize = gserialized2_from_lwgeom_any(coll->geoms[i], loc);
 		loc += subsize;
 	}
@@ -996,9 +1035,10 @@ static size_t gserialized2_from_lwgeom_any(const LWGEOM *geom, uint8_t *buf) {
 	case COLLECTIONTYPE:
 		return gserialized2_from_lwcollection((LWCOLLECTION *)geom, buf);
 	// Need to do with postgis
-	default:
-		// lwerror("Unknown geometry type: %d - %s", geom->type, lwtype_name(geom->type));
+	default: {
+		lwerror("Unknown geometry type: %d - %s", geom->type, lwtype_name(geom->type));
 		return 0;
+	}
 	}
 }
 
@@ -1037,13 +1077,200 @@ int gserialized2_peek_first_point(const GSERIALIZED *g, POINT4D *out_point) {
 		double_array_start = (double *)(geometry_start + 2 * sizeof(uint32_t));
 		break;
 
-	default:
-		// lwerror("%s is currently not implemented for type %d", __func__, type);
+	default: {
+		lwerror("%s is currently not implemented for type %d", __func__, type);
 		return LW_FAILURE;
+	}
 	}
 
 	gserialized2_copy_point(double_array_start, g->gflags, out_point);
 	return LW_SUCCESS;
+}
+
+/*
+ * Populate a bounding box *without* allocating an LWGEOM. Useful
+ * for some performance purposes.
+ */
+int gserialized2_peek_gbox_p(const GSERIALIZED *g, GBOX *gbox) {
+	uint32_t type = gserialized2_get_type(g);
+	uint8_t *geometry_start = gserialized2_get_geometry_p(g);
+	double *dptr = (double *)(geometry_start);
+	int32_t *iptr = (int32_t *)(geometry_start);
+
+	/* Peeking doesn't help if you already have a box or are geodetic */
+	if (G2FLAGS_GET_GEODETIC(g->gflags) || G2FLAGS_GET_BBOX(g->gflags)) {
+		return LW_FAILURE;
+	}
+
+	/* Boxes of points are easy peasy */
+	if (type == POINTTYPE) {
+		int i = 1; /* Start past <pointtype><padding> */
+
+		/* Read the npoints flag */
+		int isempty = (iptr[1] == 0);
+
+		/* EMPTY point has no box */
+		if (isempty)
+			return LW_FAILURE;
+
+		gbox->xmin = gbox->xmax = dptr[i++];
+		gbox->ymin = gbox->ymax = dptr[i++];
+		gbox->flags = gserialized2_get_lwflags(g);
+		if (G2FLAGS_GET_Z(g->gflags)) {
+			gbox->zmin = gbox->zmax = dptr[i++];
+		}
+		if (G2FLAGS_GET_M(g->gflags)) {
+			gbox->mmin = gbox->mmax = dptr[i++];
+		}
+		gbox_float_round(gbox);
+		return LW_SUCCESS;
+	}
+	/* We can calculate the box of a two-point cartesian line trivially */
+	else if (type == LINETYPE) {
+		int ndims = G2FLAGS_NDIMS(g->gflags);
+		int i = 0;             /* Start at <linetype><npoints> */
+		int npoints = iptr[1]; /* Read the npoints */
+
+		/* This only works with 2-point lines */
+		if (npoints != 2)
+			return LW_FAILURE;
+
+		/* Advance to X */
+		/* Past <linetype><npoints> */
+		i++;
+		gbox->xmin = FP_MIN(dptr[i], dptr[i + ndims]);
+		gbox->xmax = FP_MAX(dptr[i], dptr[i + ndims]);
+
+		/* Advance to Y */
+		i++;
+		gbox->ymin = FP_MIN(dptr[i], dptr[i + ndims]);
+		gbox->ymax = FP_MAX(dptr[i], dptr[i + ndims]);
+
+		gbox->flags = gserialized2_get_lwflags(g);
+		if (G2FLAGS_GET_Z(g->gflags)) {
+			/* Advance to Z */
+			i++;
+			gbox->zmin = FP_MIN(dptr[i], dptr[i + ndims]);
+			gbox->zmax = FP_MAX(dptr[i], dptr[i + ndims]);
+		}
+		if (G2FLAGS_GET_M(g->gflags)) {
+			/* Advance to M */
+			i++;
+			gbox->mmin = FP_MIN(dptr[i], dptr[i + ndims]);
+			gbox->mmax = FP_MAX(dptr[i], dptr[i + ndims]);
+		}
+		gbox_float_round(gbox);
+		return LW_SUCCESS;
+	}
+	/* We can also do single-entry multi-points */
+	else if (type == MULTIPOINTTYPE) {
+		int i = 0;            /* Start at <multipointtype><ngeoms> */
+		int ngeoms = iptr[1]; /* Read the ngeoms */
+		int npoints;
+
+		/* This only works with single-entry multipoints */
+		if (ngeoms != 1)
+			return LW_FAILURE;
+
+		/* Npoints is at <multipointtype><ngeoms><pointtype><npoints> */
+		npoints = iptr[3];
+
+		/* The check below is necessary because we can have a MULTIPOINT
+		 * that contains a single, empty POINT (ngeoms = 1, npoints = 0) */
+		if (npoints != 1)
+			return LW_FAILURE;
+
+		/* Move forward two doubles (four ints) */
+		/* Past <multipointtype><ngeoms> */
+		/* Past <pointtype><npoints> */
+		i += 2;
+
+		/* Read the doubles from the one point */
+		gbox->xmin = gbox->xmax = dptr[i++];
+		gbox->ymin = gbox->ymax = dptr[i++];
+		gbox->flags = gserialized2_get_lwflags(g);
+		if (G2FLAGS_GET_Z(g->gflags)) {
+			gbox->zmin = gbox->zmax = dptr[i++];
+		}
+		if (G2FLAGS_GET_M(g->gflags)) {
+			gbox->mmin = gbox->mmax = dptr[i++];
+		}
+		gbox_float_round(gbox);
+		return LW_SUCCESS;
+	}
+	/* And we can do single-entry multi-lines with two vertices (!!!) */
+	else if (type == MULTILINETYPE) {
+		int ndims = G2FLAGS_NDIMS(g->gflags);
+		int i = 0;            /* Start at <multilinetype><ngeoms> */
+		int ngeoms = iptr[1]; /* Read the ngeoms */
+		int npoints;
+
+		/* This only works with 1-line multilines */
+		if (ngeoms != 1)
+			return LW_FAILURE;
+
+		/* Npoints is at <multilinetype><ngeoms><linetype><npoints> */
+		npoints = iptr[3];
+
+		if (npoints != 2)
+			return LW_FAILURE;
+
+		/* Advance to X */
+		/* Move forward two doubles (four ints) */
+		/* Past <multilinetype><ngeoms> */
+		/* Past <linetype><npoints> */
+		i += 2;
+		gbox->xmin = FP_MIN(dptr[i], dptr[i + ndims]);
+		gbox->xmax = FP_MAX(dptr[i], dptr[i + ndims]);
+
+		/* Advance to Y */
+		i++;
+		gbox->ymin = FP_MIN(dptr[i], dptr[i + ndims]);
+		gbox->ymax = FP_MAX(dptr[i], dptr[i + ndims]);
+
+		gbox->flags = gserialized2_get_lwflags(g);
+		if (G2FLAGS_GET_Z(g->gflags)) {
+			/* Advance to Z */
+			i++;
+			gbox->zmin = FP_MIN(dptr[i], dptr[i + ndims]);
+			gbox->zmax = FP_MAX(dptr[i], dptr[i + ndims]);
+		}
+		if (G2FLAGS_GET_M(g->gflags)) {
+			/* Advance to M */
+			i++;
+			gbox->mmin = FP_MIN(dptr[i], dptr[i + ndims]);
+			gbox->mmax = FP_MAX(dptr[i], dptr[i + ndims]);
+		}
+		gbox_float_round(gbox);
+		return LW_SUCCESS;
+	}
+
+	return LW_FAILURE;
+}
+
+/**
+ * Read the bounding box off a serialization and calculate one if
+ * it is not already there.
+ */
+int gserialized2_get_gbox_p(const GSERIALIZED *g, GBOX *box) {
+	/* Try to just read the serialized box. */
+	if (gserialized2_read_gbox_p(g, box) == LW_SUCCESS) {
+		return LW_SUCCESS;
+	}
+	/* No box? Try to peek into simpler geometries and */
+	/* derive a box without creating an lwgeom */
+	else if (gserialized2_peek_gbox_p(g, box) == LW_SUCCESS) {
+		return LW_SUCCESS;
+	}
+	/* Damn! Nothing for it but to create an lwgeom... */
+	/* See http://trac.osgeo.org/postgis/ticket/1023 */
+	else {
+		LWGEOM *lwgeom = lwgeom_from_gserialized(g);
+		int ret = lwgeom_calculate_gbox(lwgeom, box);
+		gbox_float_round(box);
+		lwgeom_free(lwgeom);
+		return ret;
+	}
 }
 
 } // namespace duckdb

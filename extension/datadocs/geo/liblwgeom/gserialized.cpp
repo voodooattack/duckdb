@@ -108,4 +108,37 @@ void gserialized_error_if_srid_mismatch(const GSERIALIZED *g1, const GSERIALIZED
 		        lwtype_name(gserialized1_get_type(g1)), srid1, lwtype_name(gserialized_get_type(g2)), srid2);
 }
 
+void gserialized_error_if_srid_mismatch_reference(const GSERIALIZED *g1, const int32_t srid2, const char *funcname) {
+	int32_t srid1 = gserialized_get_srid(g1);
+	if (srid1 != srid2) {
+		std::ostringstream s;
+		s << funcname << ": Operation on mixed SRID geometries " << lwtype_name(gserialized1_get_type(g1)) << " "
+		  << srid1 << " != " << srid2;
+		std::string errormsg = s.str();
+		lwerror(errormsg.c_str());
+	}
+}
+
+/**
+ * Check if a #GSERIALIZED has a Z ordinate.
+ */
+int gserialized_has_z(const GSERIALIZED *g) {
+	if (GFLAGS_GET_VERSION(g->gflags))
+		return gserialized2_has_z(g);
+	else
+		return gserialized1_has_z(g);
+}
+
+/**
+ * Read the box from the #GSERIALIZED or calculate it if necessary.
+ * Return #LWFAILURE if box cannot be calculated (NULL or EMPTY
+ * input).
+ */
+int gserialized_get_gbox_p(const GSERIALIZED *g, GBOX *gbox) {
+	if (GFLAGS_GET_VERSION(g->gflags))
+		return gserialized2_get_gbox_p(g, gbox);
+	else
+		return gserialized1_get_gbox_p(g, gbox);
+}
+
 } // namespace duckdb

@@ -105,6 +105,11 @@ int gserialized2_has_bbox(const GSERIALIZED *gser);
 int gserialized2_has_extended(const GSERIALIZED *g);
 
 /**
+ * Check if a #GSERIALIZED has a Z ordinate.
+ */
+int gserialized2_has_z(const GSERIALIZED *gser);
+
+/**
  * Point into the float box area of the serialization
  */
 const float *gserialized2_get_float_box_p(const GSERIALIZED *g, size_t *ndims);
@@ -115,5 +120,14 @@ const float *gserialized2_get_float_box_p(const GSERIALIZED *g, size_t *ndims);
 size_t gserialized2_from_lwgeom_size(const LWGEOM *geom);
 
 int gserialized2_peek_first_point(const GSERIALIZED *g, POINT4D *out_point);
+
+int gserialized2_peek_gbox_p(const GSERIALIZED *g, GBOX *gbox);
+
+/**
+ * Read the box from the #GSERIALIZED or calculate it if necessary.
+ * Return #LWFAILURE if box cannot be calculated (NULL or EMPTY
+ * input).
+ */
+int gserialized2_get_gbox_p(const GSERIALIZED *g, GBOX *gbox);
 
 } // namespace duckdb

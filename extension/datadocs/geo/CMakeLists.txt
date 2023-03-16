@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.1)
 
 include_directories(include)
 include_directories(third_party/json/include)
+include_directories(third_party/geos/include)
 
 add_subdirectory(third_party)
 
@@ -10,14 +11,21 @@ add_library(
   geo-extension.cpp
   geo-functions.cpp
   postgis.cpp
-  geometry.cpp
+  geometry-functions.cpp
   postgis/lwgeom_inout.cpp
   postgis/lwgeom_functions_basic.cpp
+  postgis/lwgeom_functions_analytic.cpp
   postgis/geography_measurement.cpp
   postgis/geography_measurement_trees.cpp
   postgis/lwgeom_ogc.cpp
   postgis/lwgeom_geos.cpp
   postgis/geography_centroid.cpp
+  postgis/lwgeom_export.cpp
+  postgis/lwgeom_in_geojson.cpp
+  postgis/lwgeom_in_geohash.cpp
+  postgis/lwgeom_box.cpp
+  postgis/lwgeom_dump.cpp
+  postgis/lwgeom_window.cpp
   liblwgeom/lwin_wkt.cpp
   liblwgeom/lwin_wkb.cpp
   liblwgeom/lwutil.cpp
@@ -50,6 +58,13 @@ add_library(
   liblwgeom/lwpoly.cpp
   liblwgeom/lwcurvepoly.cpp
   liblwgeom/lwmpoly.cpp
+  liblwgeom/lwiterator.cpp
+  liblwgeom/lwpsurface.cpp
+  liblwgeom/lwtin.cpp
+  liblwgeom/lwgeom_geos2.cpp
+  liblwgeom/lwstroke.cpp
+  liblwgeom/lwunionfind.cpp
+  liblwgeom/lwgeom_geos_cluster.cpp
   parser/lwin_wkt_lex.cpp
   parser/lwin_wkt_parse.cpp
   libpgcommon/lwgeom_pg.cpp

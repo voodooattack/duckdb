@@ -1,5 +1,3 @@
-#include "duckdb.hpp"
-
 #include "vector_proxy.hpp"
 
 namespace duckdb {

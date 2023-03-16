@@ -1,8 +1,44 @@
+/**********************************************************************
+ *
+ * PostGIS - Spatial Types for PostgreSQL
+ * http://postgis.net
+ *
+ * PostGIS is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * PostGIS is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with PostGIS.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ **********************************************************************
+ *
+ * Copyright 2018 Darafei Praliaskouski <me@komzpa.net>
+ * Copyright 2017-2018 Daniel Baston <dbaston@gmail.com>
+ * Copyright 2011 Sandro Santilli <strk@kbt.io>
+ * Copyright 2011 Paul Ramsey <pramsey@cleverelephant.ca>
+ * Copyright 2007-2008 Mark Cave-Ayland
+ * Copyright 2001-2006 Refractions Research Inc.
+ *
+ **********************************************************************/
+
 #pragma once
 #include "duckdb.hpp"
 #include "liblwgeom/liblwgeom.hpp"
 
 namespace duckdb {
+
+inline static double distance2d_sqr_pt_pt(const POINT2D *p1, const POINT2D *p2) {
+	double hside = p2->x - p1->x;
+	double vside = p2->y - p1->y;
+
+	return hside * hside + vside * vside;
+}
 
 /*
  * Size of point represeneted in the POINTARRAY
@@ -59,6 +95,15 @@ static inline const POINT2D *getPoint2d_cp(const POINTARRAY *pa, uint32_t n) {
  */
 static inline const POINT3D *getPoint3d_cp(const POINTARRAY *pa, uint32_t n) {
 	return (const POINT3D *)getPoint_internal(pa, n);
+}
+
+static inline LWPOINT *lwgeom_as_lwpoint(const LWGEOM *lwgeom) {
+	if (!lwgeom)
+		return NULL;
+	if (lwgeom->type == POINTTYPE)
+		return (LWPOINT *)lwgeom;
+	else
+		return NULL;
 }
 
 static inline int lwpoint_is_empty(const LWPOINT *point) {

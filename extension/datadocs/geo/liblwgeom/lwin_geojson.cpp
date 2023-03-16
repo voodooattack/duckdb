@@ -1,3 +1,29 @@
+/**********************************************************************
+ *
+ * PostGIS - Spatial Types for PostgreSQL
+ * http://postgis.net
+ *
+ * PostGIS is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * PostGIS is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with PostGIS.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ **********************************************************************
+ *
+ * Copyright 2019 Darafei Praliaskouski <me@komzpa.net>
+ * Copyright 2013 Sandro Santilli <strk@kbt.io>
+ * Copyright 2011 Kashif Rasul <kashif.rasul@gmail.com>
+ *
+ **********************************************************************/
+
 #include "json.hpp"
 #include "liblwgeom/liblwgeom_internal.hpp"
 #include "liblwgeom/lwinline.hpp"
@@ -30,7 +56,7 @@ static inline json_object *findMemberByName(json_object *poObj, const char *pszN
 
 	if (json_object_get_object(poTmp)) {
 		if (!json_object_get_object(poTmp)->head) {
-			// lwerror("invalid GeoJSON representation");
+			lwerror("invalid GeoJSON representation");
 			return NULL;
 		}
 
@@ -48,12 +74,12 @@ static inline json_object *findMemberByName(json_object *poObj, const char *pszN
 static inline json_object *parse_coordinates(json_object *geojson) {
 	json_object *coordinates = findMemberByName(geojson, "coordinates");
 	if (!coordinates) {
-		// lwerror("Unable to find 'coordinates' in GeoJSON string");
+		lwerror("Unable to find 'coordinates' in GeoJSON string");
 		return NULL;
 	}
 
 	if (json_type_array != json_object_get_type(coordinates)) {
-		// lwerror("The 'coordinates' in GeoJSON are not an array");
+		lwerror("The 'coordinates' in GeoJSON are not an array");
 		return NULL;
 	}
 	return coordinates;
@@ -66,7 +92,7 @@ static inline int parse_geojson_coord(json_object *poObj, int *hasz, POINTARRAY 
 		json_object *poObjCoord = NULL;
 		const int nSize = json_object_array_length(poObj);
 		if (nSize < 2) {
-			// lwerror("Too few ordinates in GeoJSON");
+			lwerror("Too few ordinates in GeoJSON");
 			return LW_FAILURE;
 		}
 
@@ -87,7 +113,7 @@ static inline int parse_geojson_coord(json_object *poObj, int *hasz, POINTARRAY 
 		}
 	} else {
 		/* If it's not an array, just don't handle it */
-		// lwerror("The 'coordinates' in GeoJSON are not sufficiently nested");
+		lwerror("The 'coordinates' in GeoJSON are not sufficiently nested");
 		return LW_FAILURE;
 	}
 
@@ -136,7 +162,7 @@ static inline LWPOLY *parse_geojson_poly_rings(json_object *rings, int *hasz) {
 			for (int k = 0; k < o; k++)
 				ptarray_free(ppa[k]);
 			lwfree(ppa);
-			// lwerror("The 'coordinates' in GeoJSON ring are not an array");
+			lwerror("The 'coordinates' in GeoJSON ring are not an array");
 			return NULL;
 		}
 		int nPoints = json_object_array_length(points);
@@ -158,7 +184,7 @@ static inline LWPOLY *parse_geojson_poly_rings(json_object *rings, int *hasz) {
 				for (int k = 0; k <= o; k++)
 					ptarray_free(ppa[k]);
 				lwfree(ppa);
-				// lwerror("The 'coordinates' in GeoJSON are not sufficiently nested");
+				lwerror("The 'coordinates' in GeoJSON are not sufficiently nested");
 				return NULL;
 			}
 		}
@@ -250,7 +276,7 @@ static inline LWGEOM *parse_geojson_multipolygon(json_object *geojson, int *hasz
 static inline LWGEOM *parse_geojson_geometrycollection(json_object *geojson, int *hasz) {
 	json_object *poObjGeoms = findMemberByName(geojson, "geometries");
 	if (!poObjGeoms) {
-		// lwerror("Unable to find 'geometries' in GeoJSON string");
+		lwerror("Unable to find 'geometries' in GeoJSON string");
 		return NULL;
 	}
 	LWGEOM *geom = (LWGEOM *)lwcollection_construct_empty(COLLECTIONTYPE, 0, 1, 0);
@@ -277,13 +303,13 @@ static inline LWGEOM *parse_geojson(json_object *geojson, int *hasz) {
 	const char *name;
 
 	if (!geojson) {
-		// lwerror("invalid GeoJSON representation");
+		lwerror("invalid GeoJSON representation");
 		return NULL;
 	}
 
 	type = findMemberByName(geojson, "type");
 	if (!type) {
-		// lwerror("unknown GeoJSON type");
+		lwerror("unknown GeoJSON type");
 		return NULL;
 	}
 
@@ -312,7 +338,7 @@ static inline LWGEOM *parse_geojson(json_object *geojson, int *hasz) {
 
 	// Need to do with postgis
 
-	// lwerror("invalid GeoJson representation");
+	lwerror("invalid GeoJson representation");
 	return NULL; /* Never reach */
 }
 
@@ -325,7 +351,7 @@ LWGEOM *lwgeom_from_geojson(const char *geojson, char **srs) {
 		snprintf(err, 256, "%s (at offset %d)", json_tokener_error_desc(jstok->err), jstok->char_offset);
 		json_tokener_free(jstok);
 		json_object_put(poObj);
-		// lwerror(err);
+		lwerror(err);
 		return NULL;
 	}
 	json_tokener_free(jstok);

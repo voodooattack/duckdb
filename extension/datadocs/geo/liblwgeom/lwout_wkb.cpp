@@ -1,4 +1,28 @@
-#include "liblwgeom/lwgeom_wkt.hpp"
+/**********************************************************************
+ *
+ * PostGIS - Spatial Types for PostgreSQL
+ * http://postgis.net
+ *
+ * PostGIS is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * PostGIS is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with PostGIS.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ **********************************************************************
+ *
+ * Copyright (C) 2009 Paul Ramsey <pramsey@cleverelephant.ca>
+ *
+ **********************************************************************/
+
+#include "liblwgeom/lwin_wkt.hpp"
 #include "liblwgeom/lwinline.hpp"
 
 #include <cstring>
@@ -108,7 +132,7 @@ static uint32_t lwgeom_wkb_type(const LWGEOM *geom, uint8_t variant) {
 		break;
 
 	default:
-		// lwerror("%s: Unsupported geometry type: %s", __func__, lwtype_name(geom->type));
+		lwerror("%s: Unsupported geometry type: %s", __func__, lwtype_name(geom->type));
 		wkb_type = 0;
 	}
 
@@ -165,7 +189,7 @@ static uint8_t *integer_to_wkb_buf(const uint32_t ival, uint8_t *buf, uint8_t va
 	int i = 0;
 
 	if (sizeof(int) != WKB_INT_SIZE) {
-		// lwerror("Machine int size is not %d bytes!", WKB_INT_SIZE);
+		lwerror("Machine int size is not %d bytes!", WKB_INT_SIZE);
 		return NULL;
 	}
 	if (variant & WKB_HEX) {
@@ -203,7 +227,7 @@ static uint8_t *double_to_wkb_buf(const double d, uint8_t *buf, uint8_t variant)
 	int i = 0;
 
 	if (sizeof(double) != WKB_DOUBLE_SIZE) {
-		// lwerror("Machine double size is not %d bytes!", WKB_DOUBLE_SIZE);
+		lwerror("Machine double size is not %d bytes!", WKB_DOUBLE_SIZE);
 		return NULL;
 	}
 
@@ -276,7 +300,7 @@ uint8_t *lwgeom_to_wkb_buffer(const LWGEOM *geom, uint8_t variant) {
 
 	if (written_size != (ptrdiff_t)b_size) {
 		char *wkt = lwgeom_to_wkt(geom, WKT_EXTENDED, 15, NULL);
-		// lwerror("Output WKB is not the same size as the allocated buffer. Variant: %u, Geom: %s", variant, wkt);
+		lwerror("Output WKB is not the same size as the allocated buffer. Variant: %u, Geom: %s", variant, wkt);
 		lwfree(wkt);
 		lwfree(buffer);
 		return NULL;
@@ -614,7 +638,7 @@ size_t lwgeom_to_wkb_size(const LWGEOM *geom, uint8_t variant) {
 	size_t size = 0;
 
 	if (geom == NULL) {
-		// lwerror("Cannot convert NULL into WKB.");
+		lwerror("Cannot convert NULL into WKB.");
 		return 0;
 	}
 
@@ -656,9 +680,10 @@ size_t lwgeom_to_wkb_size(const LWGEOM *geom, uint8_t variant) {
 	// Need to do with postgis
 
 	/* Unknown type! */
-	default:
-		// lwerror("%s: Unsupported geometry type: %s", __func__, lwtype_name(geom->type));
+	default: {
+		lwerror("%s: Unsupported geometry type: %s", __func__, lwtype_name(geom->type));
 		return 0;
+	}
 	}
 
 	return size;
@@ -700,12 +725,33 @@ static uint8_t *lwgeom_to_wkb_buf(const LWGEOM *geom, uint8_t *buf, uint8_t vari
 	// Need to do with postgis
 
 	/* Unknown type! */
-	default:
-		// lwerror("%s: Unsupported geometry type: %s", __func__, lwtype_name(geom->type));
+	default: {
+		lwerror("%s: Unsupported geometry type: %s", __func__, lwtype_name(geom->type));
 		return nullptr;
+	}
 	}
 	/* Return value to keep compiler happy. */
 	return nullptr;
+}
+
+lwvarlena_t *lwgeom_to_wkb_varlena(const LWGEOM *geom, uint8_t variant) {
+	size_t b_size = lwgeom_to_wkb_size(geom, variant);
+	/* Hex string takes twice as much space as binary, but No NULL ending in varlena */
+	if (variant & WKB_HEX) {
+		b_size = 2 * b_size;
+	}
+
+	lwvarlena_t *buffer = (lwvarlena_t *)lwalloc(b_size + LWVARHDRSZ);
+	int written_size = lwgeom_to_wkb_write_buf(geom, variant, (uint8_t *)buffer->data);
+	if (written_size != (ptrdiff_t)b_size) {
+		char *wkt = lwgeom_to_wkt(geom, WKT_EXTENDED, 15, NULL);
+		lwerror("Output WKB is not the same size as the allocated buffer. Variant: %u, Geom: %s", variant, wkt);
+		lwfree(wkt);
+		lwfree(buffer);
+		return NULL;
+	}
+	LWSIZE_SET(buffer->size, written_size + LWVARHDRSZ);
+	return buffer;
 }
 
 } // namespace duckdb

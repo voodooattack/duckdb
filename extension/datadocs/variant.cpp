@@ -26,11 +26,12 @@ namespace duckdb {
 LogicalType DDGeoType;
 
 const LogicalType DDNumericType = LogicalType::DECIMAL(dd_numeric_width, dd_numeric_scale);
+const LogicalType DDJsonType = JSONCommon::JSONType();
 
 // clang-format off
 const LogicalType DDVariantType = LogicalType::STRUCT({
 	{"__type", LogicalType::VARCHAR},
-	{"__value", LogicalType::JSON}
+	{"__value", DDJsonType}
 });
 // clang-format on
 
@@ -40,7 +41,8 @@ using namespace std::placeholders;
 
 class VariantWriter {
 public:
-	VariantWriter(const LogicalType &arg_type, yyjson_mut_doc *doc = nullptr) : doc(doc), type(&arg_type) {
+	VariantWriter(const LogicalType &arg_type, yyjson_mut_doc *doc = nullptr)
+	    : doc(doc), alc(Allocator::DefaultAllocator()), type(&arg_type) {
 		is_list = type->id() == LogicalTypeId::LIST;
 		if (is_list) {
 			type = &ListType::GetChildType(*type);
@@ -117,11 +119,16 @@ public:
 			}
 			break;
 		case LogicalTypeId::VARCHAR:
-			type_name = is_list ? "STRING[]" : "STRING";
-			write_func = &VariantWriter::WriteString;
+			if (type->GetAlias() == JSONCommon::JSON_TYPE_NAME) {
+				type_name = is_list ? "JSON[]" : "JSON";
+				write_func = &VariantWriter::WriteJSON;
+			} else {
+				type_name = is_list ? "STRING[]" : "STRING";
+				write_func = &VariantWriter::WriteString;
+			}
 			break;
 		case LogicalTypeId::BLOB:
-			if (type->GetAlias() == "GEOMETRY") {
+			if (type->GetAlias() == "GEOGRAPHY") {
 				type_name = is_list ? "GEOGRAPHY[]" : "GEOGRAPHY";
 				write_func = &VariantWriter::WriteGeography;
 			} else {
@@ -189,10 +196,6 @@ public:
 			type_name = is_list ? "NULL[]" : "NULL";
 			write_func = &VariantWriter::WriteNull;
 			break;
-		case LogicalTypeId::JSON:
-			type_name = is_list ? "JSON[]" : "JSON";
-			write_func = &VariantWriter::WriteJSON;
-			break;
 		case LogicalTypeId::LIST:
 			type_name = is_list ? "JSON[]" : "JSON";
 			write_func = &VariantWriter::WriteList;
@@ -218,8 +221,8 @@ public:
 	}
 
 	bool Process(VectorWriter &result, const VectorReader &arg) {
-		auto p_doc = JSONCommon::CreateDocument();
-		doc = *p_doc;
+		alc.Reset();
+		doc = JSONCommon::CreateDocument(alc.GetYYJSONAllocator());
 		yyjson_mut_val *root = ProcessValue(arg);
 		if (yyjson_mut_is_null(root)) {
 			return false;
@@ -228,8 +231,8 @@ public:
 		writer[0].SetString(type_name);
 		yyjson_mut_doc_set_root(doc, root);
 		size_t len;
-		unique_ptr<char, decltype(&free)> data(yyjson_mut_write(doc, 0, &len), free);
-		writer[1].SetString(string_t(data.get(), len));
+		char *data = yyjson_mut_write_opts(doc, 0, alc.GetYYJSONAllocator(), &len, nullptr);
+		writer[1].SetString(string_t(data, len));
 		return true;
 	}
 
@@ -365,8 +368,8 @@ private:
 	}
 
 	yyjson_mut_val *WriteJSON(const VectorReader &arg) {
-		auto arg_doc = JSONCommon::ReadDocument(arg.Get<string_t>());
-		return yyjson_val_mut_copy(doc, yyjson_doc_get_root(*arg_doc));
+		auto arg_doc = JSONCommon::ReadDocument(arg.Get<string_t>(), JSONCommon::READ_FLAG, alc.GetYYJSONAllocator());
+		return yyjson_val_mut_copy(doc, yyjson_doc_get_root(arg_doc));
 	}
 
 	yyjson_mut_val *WriteGeography(const VectorReader &arg) {
@@ -401,19 +404,18 @@ private:
 	}
 
 	yyjson_mut_val *WriteMap(const VectorReader &arg) {
-		auto &arg_types = StructType::GetChildTypes(*type);
-		if (ListType::GetChildType(arg_types[0].second).id() != LogicalTypeId::VARCHAR) {
+		if (MapType::KeyType(*type).id() != LogicalTypeId::VARCHAR) {
 			return yyjson_mut_null(doc);
 		}
-		VariantWriter writer(ListType::GetChildType(arg_types[1].second), doc);
+		VariantWriter writer(MapType::ValueType(*type), doc);
 		yyjson_mut_val *obj = yyjson_mut_obj(doc);
-		VectorReader arg_value = *arg[1].begin();
-		for (const VectorReader &arg_key : arg[0]) {
-			std::string_view child_key = arg_key.GetString();
+		for (const VectorReader &item : arg) {
+			D_ASSERT(!item.IsNull());
+			std::string_view child_key = item[0].GetString();
 			yyjson_mut_val *key = yyjson_mut_strn(doc, child_key.data(), child_key.size());
+			const VectorReader &arg_value = item[1];
 			yyjson_mut_val *val = arg_value.IsNull() ? yyjson_mut_null(doc) : writer.ProcessValue(arg_value);
 			yyjson_mut_obj_put(obj, key, val);
-			++arg_value;
 		}
 		return obj;
 	}
@@ -430,6 +432,7 @@ private:
 
 private:
 	yyjson_mut_doc *doc;
+	JSONAllocator alc;
 	yyjson_mut_val *(VariantWriter::*write_func)(const VectorReader &) = nullptr;
 	const char *type_name = nullptr;
 	bool is_list = false;
@@ -445,14 +448,16 @@ static void VariantFunction(DataChunk &args, ExpressionState &state, Vector &res
 class VariantReaderBase {
 public:
 	bool ProcessScalar(VectorWriter &result, const VectorReader &arg) {
-		auto doc = JSONCommon::ReadDocument(arg[1].Get<string_t>());
-		auto val = yyjson_doc_get_root(*doc);
+		alc.Reset();
+		auto doc = JSONCommon::ReadDocument(arg[1].Get<string_t>(), JSONCommon::READ_FLAG, alc.GetYYJSONAllocator());
+		auto val = yyjson_doc_get_root(doc);
 		return ReadScalar(result, val);
 	}
 
 	bool ProcessList(VectorWriter &result, const VectorReader &arg) {
-		auto doc = JSONCommon::ReadDocument(arg[1].Get<string_t>());
-		auto root = yyjson_doc_get_root(*doc);
+		alc.Reset();
+		auto doc = JSONCommon::ReadDocument(arg[1].Get<string_t>(), JSONCommon::READ_FLAG, alc.GetYYJSONAllocator());
+		auto root = yyjson_doc_get_root(doc);
 		yyjson_arr_iter iter;
 		if (!yyjson_arr_iter_init(root, &iter)) {
 			return false;
@@ -469,6 +474,9 @@ public:
 	}
 
 	virtual bool ReadScalar(VectorWriter &result, yyjson_val *val) = 0;
+
+protected:
+	JSONAllocator alc {Allocator::DefaultAllocator()};
 };
 
 class VariantReaderBool : public VariantReaderBase {
@@ -696,7 +704,7 @@ public:
 			return false;
 		}
 		timestamp_t res;
-		if (!Timestamp::TryConvertTimestamp(str_val, strlen(str_val), res)) {
+		if (Timestamp::TryConvertTimestamp(str_val, strlen(str_val), res) != TimestampCastResult::SUCCESS) {
 			return false;
 		}
 		result.Set(res.value);
@@ -722,7 +730,7 @@ public:
 			return false;
 		}
 		timestamp_t res;
-		if (!Timestamp::TryConvertTimestamp(str_val, strlen(str_val), res)) {
+		if (Timestamp::TryConvertTimestamp(str_val, strlen(str_val), res) != TimestampCastResult::SUCCESS) {
 			return false;
 		}
 		result.Set(res.value);
@@ -767,11 +775,11 @@ public:
 	}
 
 	bool ReadScalar(VectorWriter &result, yyjson_val *val) override {
-		auto res_doc = JSONCommon::CreateDocument();
-		yyjson_mut_doc_set_root(*res_doc, yyjson_val_mut_copy(*res_doc, val));
+		auto res_doc = JSONCommon::CreateDocument(alc.GetYYJSONAllocator());
+		yyjson_mut_doc_set_root(res_doc, yyjson_val_mut_copy(res_doc, val));
 		size_t len;
-		unique_ptr<char, decltype(&free)> data(yyjson_mut_write(*res_doc, 0, &len), free);
-		result.SetString(string_t(data.get(), len));
+		char *data = yyjson_mut_write_opts(res_doc, 0, alc.GetYYJSONAllocator(), &len, nullptr);
+		result.SetString(string_t(data, len));
 		return true;
 	}
 };
@@ -815,7 +823,7 @@ static void FromVariantListFunc(DataChunk &args, ExpressionState &state, Vector 
 	VectorExecute(args, result, Reader(), &Reader::ProcessList);
 }
 
-static bool VariantAccessWrite(VectorWriter &result, const VectorReader &arg, yyjson_val *val) {
+static bool VariantAccessWrite(VectorWriter &result, const VectorReader &arg, yyjson_val *val, JSONAllocator &alc) {
 	if (!val || unsafe_yyjson_is_null(val)) {
 		return false;
 	}
@@ -849,26 +857,28 @@ static bool VariantAccessWrite(VectorWriter &result, const VectorReader &arg, yy
 
 	VectorStructWriter writer = result.SetStruct();
 	writer[0].SetString(res_type);
-	auto res_doc = JSONCommon::CreateDocument();
-	yyjson_mut_doc_set_root(*res_doc, yyjson_val_mut_copy(*res_doc, val));
+	auto res_doc = JSONCommon::CreateDocument(alc.GetYYJSONAllocator());
+	yyjson_mut_doc_set_root(res_doc, yyjson_val_mut_copy(res_doc, val));
 	size_t len;
-	unique_ptr<char, decltype(&free)> data(yyjson_mut_write(*res_doc, 0, &len), free);
-	writer[1].SetString(string_t(data.get(), len));
+	char *data = yyjson_mut_write_opts(res_doc, 0, alc.GetYYJSONAllocator(), &len, nullptr);
+	writer[1].SetString(string_t(data, len));
 	return true;
 }
 
 static bool VariantAccessIndexImpl(VectorWriter &result, const VectorReader &arg, const VectorReader &index) {
 	int64_t idx = index.Get<int64_t>();
-	auto arg_doc = JSONCommon::ReadDocument(arg[1].Get<string_t>());
-	auto arg_root = yyjson_doc_get_root(*arg_doc);
-	return VariantAccessWrite(result, arg, yyjson_arr_get(arg_root, idx));
+	JSONAllocator alc {Allocator::DefaultAllocator()};
+	auto arg_doc = JSONCommon::ReadDocument(arg[1].Get<string_t>(), JSONCommon::READ_FLAG, alc.GetYYJSONAllocator());
+	auto arg_root = yyjson_doc_get_root(arg_doc);
+	return VariantAccessWrite(result, arg, yyjson_arr_get(arg_root, idx), alc);
 }
 
 static bool VariantAccessKeyImpl(VectorWriter &result, const VectorReader &arg, const VectorReader &index) {
 	std::string_view key = index.GetString();
-	auto arg_doc = JSONCommon::ReadDocument(arg[1].Get<string_t>());
-	auto arg_root = yyjson_doc_get_root(*arg_doc);
-	return VariantAccessWrite(result, arg, yyjson_obj_getn(arg_root, key.data(), key.size()));
+	JSONAllocator alc {Allocator::DefaultAllocator()};
+	auto arg_doc = JSONCommon::ReadDocument(arg[1].Get<string_t>(), JSONCommon::READ_FLAG, alc.GetYYJSONAllocator());
+	auto arg_root = yyjson_doc_get_root(arg_doc);
+	return VariantAccessWrite(result, arg, yyjson_obj_getn(arg_root, key.data(), key.size()), alc);
 }
 
 static void VariantAccessIndexFunc(DataChunk &args, ExpressionState &state, Vector &result) {
@@ -943,8 +953,9 @@ static string VariantSortHashInt(const string &arg) {
 }
 
 static bool VariantSortHashImpl(VectorWriter &writer, const VectorReader &arg, const VectorReader &case_sensitive) {
-	auto doc = JSONCommon::ReadDocument(arg[1].Get<string_t>());
-	auto val = yyjson_doc_get_root(*doc);
+	JSONAllocator alc {Allocator::DefaultAllocator()};
+	auto doc = JSONCommon::ReadDocument(arg[1].Get<string_t>(), JSONCommon::READ_FLAG, alc.GetYYJSONAllocator());
+	auto val = yyjson_doc_get_root(doc);
 	if (!val || unsafe_yyjson_is_null(val)) {
 		return false;
 	}
@@ -1037,16 +1048,16 @@ static bool VariantSortHashImpl(VectorWriter &writer, const VectorReader &arg, c
 	} else if (tp == "GEOGRAPHY") {
 		result = string("8") + unsafe_yyjson_get_str(val);
 	} else {
-		auto res_doc = JSONCommon::CreateDocument();
-		yyjson_mut_doc_set_root(*res_doc, yyjson_val_mut_copy(*res_doc, val));
+		auto res_doc = JSONCommon::CreateDocument(alc.GetYYJSONAllocator());
+		yyjson_mut_doc_set_root(res_doc, yyjson_val_mut_copy(res_doc, val));
 		size_t len;
-		unique_ptr<char, decltype(&free)> data(yyjson_mut_write(*res_doc, 0, &len), free);
+		char *data = yyjson_mut_write_opts(res_doc, 0, alc.GetYYJSONAllocator(), &len, nullptr);
 		result = '9';
 		if (!case_sensitive.Get<bool>() &&
 		    (tp == "STRING[]" || tp.substr(0, 4) == "JSON" || tp.substr(0, 6) == "STRUCT")) {
-			std::transform(data.get(), data.get() + len, data.get(), [](unsigned char c) { return std::tolower(c); });
+			std::transform(data, data + len, data, [](unsigned char c) { return std::tolower(c); });
 		}
-		result.append(data.get(), len);
+		result.append(data, len);
 	}
 	writer.SetString(result);
 	return true;
@@ -1182,7 +1193,7 @@ static bool VariantFromSortHashImpl(VectorWriter &writer, const VectorReader &re
 		return VariantWriter(DDGeoType).Process(writer, VectorHolder(string_t(wkb))[0]);
 	}
 	case '9': {
-		return VariantWriter(LogicalType::JSON).Process(writer, VectorHolder(arg.substr(1))[0]);
+		return VariantWriter(DDJsonType).Process(writer, VectorHolder(arg.substr(1))[0]);
 	}
 	default:
 		return false;
@@ -1212,7 +1223,7 @@ static void VariantFromSortHash(DataChunk &args, ExpressionState &state, Vector 
 
 void DataDocsExtension::LoadVariant(Connection &con) {
 	auto &context = *con.context;
-	auto &catalog = Catalog::GetCatalog(context);
+	auto &catalog = Catalog::GetSystemCatalog(context);
 
 	CreateScalarFunctionInfo variant_info(
 	    ScalarFunction("variant", {LogicalType::ANY}, DDVariantType, VariantFunction));
@@ -1229,7 +1240,7 @@ void DataDocsExtension::LoadVariant(Connection &con) {
 	REGISTER_FUNCTION(LogicalType::TIMESTAMP_TZ, timestamp, Timestamp)
 	REGISTER_FUNCTION(LogicalType::TIMESTAMP, datetime, Datetime)
 	REGISTER_FUNCTION(LogicalType::INTERVAL, interval, Interval)
-	REGISTER_FUNCTION(LogicalType::JSON, json, JSON)
+	REGISTER_FUNCTION(DDJsonType, json, JSON)
 	REGISTER_FUNCTION(DDGeoType, geography, Geography)
 
 	ScalarFunctionSet variant_access_set("variant_access");
@@ -1237,7 +1248,7 @@ void DataDocsExtension::LoadVariant(Connection &con) {
 	    ScalarFunction({DDVariantType, LogicalType::BIGINT}, DDVariantType, VariantAccessIndexFunc));
 	variant_access_set.AddFunction(
 	    ScalarFunction({DDVariantType, LogicalType::VARCHAR}, DDVariantType, VariantAccessKeyFunc));
-	CreateScalarFunctionInfo variant_access_info(move(variant_access_set));
+	CreateScalarFunctionInfo variant_access_info(std::move(variant_access_set));
 	catalog.CreateFunction(context, &variant_access_info);
 
 	CreateScalarFunctionInfo sort_hash_info(ScalarFunction("variant_sort_hash", {DDVariantType, LogicalType::BOOLEAN},

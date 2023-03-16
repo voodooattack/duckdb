@@ -40,13 +40,13 @@ namespace duckdb {
 #ifndef _LIBLWGEOM_H
 #define _LIBLWGEOM_H 1
 
-#if POSTGIS_PROJ_VERSION < 49
-/* Use the old (pre-2.2) geodesic functions */
-#undef PROJ_GEODESIC
-#else
-/* Enable new geodesic functions API */
-#define PROJ_GEODESIC
-#endif
+// #if POSTGIS_PROJ_VERSION < 49
+// /* Use the old (pre-2.2) geodesic functions */
+// #undef PROJ_GEODESIC
+// #else
+// /* Enable new geodesic functions API */
+// #define PROJ_GEODESIC
+// #endif
 
 // /* For PROJ6 we cache several extra values to avoid calls to proj_get_source_crs
 //  * or proj_get_target_crs since those are very costly
@@ -491,6 +491,9 @@ typedef struct {
 } LWTIN;
 
 /* Casts LWGEOM->LW* (return NULL if cast is illegal) */
+extern LWMLINE *lwgeom_as_lwmline(const LWGEOM *lwgeom);
+extern LWMPOLY *lwgeom_as_lwmpoly(const LWGEOM *lwgeom);
+extern LWMPOINT *lwgeom_as_lwmpoint(const LWGEOM *lwgeom);
 extern LWPOLY *lwgeom_as_lwpoly(const LWGEOM *lwgeom);
 extern LWLINE *lwgeom_as_lwline(const LWGEOM *lwgeom);
 extern LWCOLLECTION *lwgeom_as_lwcollection(const LWGEOM *lwgeom);
@@ -498,6 +501,7 @@ extern LWCOLLECTION *lwgeom_as_lwcollection(const LWGEOM *lwgeom);
 extern LWCIRCSTRING *lwgeom_as_lwcircstring(const LWGEOM *lwgeom);
 extern LWCURVEPOLY *lwgeom_as_lwcurvepoly(const LWGEOM *lwgeom);
 extern LWCOMPOUND *lwgeom_as_lwcompound(const LWGEOM *lwgeom);
+extern LWTRIANGLE *lwgeom_as_lwtriangle(const LWGEOM *lwgeom);
 
 /* Casts LW*->LWGEOM (always cast) */
 extern LWGEOM *lwcollection_as_lwgeom(const LWCOLLECTION *obj);
@@ -562,14 +566,48 @@ extern POINTARRAY *ptarray_construct_empty(char hasz, char hasm, uint32_t maxpoi
 extern int ptarray_append_point(POINTARRAY *pa, const POINT4D *pt, int allow_duplicates);
 
 /**
+ * Append a #POINTARRAY, pa2 to the end of an existing #POINTARRAY, pa1.
+ *
+ * If gap_tolerance is >= 0 then the end point of pa1 will be checked for
+ * being within gap_tolerance 2d distance from start point of pa2 or an
+ * error will be raised and LW_FAILURE returned.
+ * A gap_tolerance < 0 disables the check.
+ *
+ * If end point of pa1 and start point of pa2 are 2d-equal, then pa2 first
+ * point will not be appended.
+ */
+extern int ptarray_append_ptarray(POINTARRAY *pa1, POINTARRAY *pa2, double gap_tolerance);
+
+/**
  * Insert a point into an existing #POINTARRAY. Zero
  * is the index of the start of the array.
  */
 extern int ptarray_insert_point(POINTARRAY *pa, const POINT4D *p, uint32_t where);
 
+/**
+ * Remove a point from an existing #POINTARRAY. Zero
+ * is the index of the start of the array.
+ */
+extern int ptarray_remove_point(POINTARRAY *pa, uint32_t where);
+
+/**
+ * @brief Add a point in a pointarray.
+ *
+ * @param pa the source POINTARRAY
+ * @param p the point to add
+ * @param pdims number of ordinates in p (2..4)
+ * @param where to insert the point. 0 prepends, pa->npoints appends
+ *
+ * @returns a newly constructed POINTARRAY using a newly allocated buffer
+ *          for the actual points, or NULL on error.
+ */
+extern POINTARRAY *ptarray_addPoint(const POINTARRAY *pa, uint8_t *p, size_t pdims, uint32_t where);
+
 extern int ptarray_is_closed_2d(const POINTARRAY *pa);
 extern int ptarray_is_closed_3d(const POINTARRAY *pa);
 extern int ptarray_is_closed_z(const POINTARRAY *pa);
+
+extern int lwpoint_getPoint4d_p(const LWPOINT *point, POINT4D *out);
 
 /******************************************************************
  * LWPOLY functions
@@ -594,9 +632,21 @@ extern int lwcurvepoly_add_ring(LWCURVEPOLY *poly, LWGEOM *ring);
 extern int lwcompound_add_lwgeom(LWCOMPOUND *comp, LWGEOM *geom);
 
 /**
+ * Construct an equivalent curve polygon from a polygon. Curve polygons
+ * can have linear rings as their rings, so this works fine (in theory?)
+ */
+extern LWCURVEPOLY *lwcurvepoly_construct_from_lwpoly(LWPOLY *lwpoly);
+
+/**
  * Construct a new flags bitmask.
  */
 extern lwflags_t lwflags(int hasz, int hasm, int geodetic);
+
+/******************************************************************
+ * LWMULTIx and LWCOLLECTION functions
+ ******************************************************************/
+
+LWGEOM *lwcollection_getsubgeom(LWCOLLECTION *col, int gnum);
 
 /******************************************************************
  * SERIALIZED FORM functions
@@ -619,6 +669,11 @@ extern int32_t lwgeom_get_srid(const LWGEOM *geom);
  */
 extern int lwgeom_has_z(const LWGEOM *geom);
 
+/**
+ * Return #LW_TRUE if geometry has M ordinates.
+ */
+extern int lwgeom_has_m(const LWGEOM *geom);
+
 /****************************************************************
  * MEMORY MANAGEMENT
  ****************************************************************/
@@ -638,6 +693,7 @@ extern void lwpoly_free(LWPOLY *poly);
 extern void lwcircstring_free(LWCIRCSTRING *curve);
 extern void lwmpoint_free(LWMPOINT *mpt);
 extern void lwmline_free(LWMLINE *mline);
+extern void lwmpoly_free(LWMPOLY *mpoly);
 extern void lwtriangle_free(LWTRIANGLE *triangle);
 extern void lwcollection_free(LWCOLLECTION *col);
 extern void lwgeom_free(LWGEOM *geom);
@@ -651,8 +707,26 @@ extern float next_float_down(double d);
 extern float next_float_up(double d);
 
 /* general utilities 2D */
+extern double distance2d_pt_pt(const POINT2D *p1, const POINT2D *p2);
 extern double lwgeom_mindistance2d(const LWGEOM *lw1, const LWGEOM *lw2);
 extern double lwgeom_mindistance2d_tolerance(const LWGEOM *lw1, const LWGEOM *lw2, double tolerance);
+extern double lwgeom_maxdistance2d(const LWGEOM *lw1, const LWGEOM *lw2);
+extern double lwgeom_maxdistance2d_tolerance(const LWGEOM *lw1, const LWGEOM *lw2, double tolerance);
+extern LWGEOM *lwgeom_closest_point(const LWGEOM *lw1, const LWGEOM *lw2);
+
+extern double lwgeom_area(const LWGEOM *geom);
+extern double lwgeom_perimeter_2d(const LWGEOM *geom);
+extern int lwgeom_dimension(const LWGEOM *geom);
+
+extern LWPOINT *lwline_get_lwpoint(const LWLINE *line, uint32_t where);
+
+extern LWPOINT *lwcompound_get_startpoint(const LWCOMPOUND *lwcmp);
+extern LWPOINT *lwcompound_get_endpoint(const LWCOMPOUND *lwcmp);
+extern LWPOINT *lwcompound_get_lwpoint(const LWCOMPOUND *lwcmp, uint32_t where);
+
+extern double ptarray_length_2d(const POINTARRAY *pts);
+extern double lwgeom_length_2d(const LWGEOM *geom);
+extern int azimuth_pt_pt(const POINT2D *p1, const POINT2D *p2, double *ret);
 
 /**
  * @brief Check whether or not a lwgeom is big enough to warrant a bounding box.
@@ -671,6 +745,26 @@ extern int lwgeom_needs_bbox(const LWGEOM *geom);
 extern uint32_t lwgeom_count_vertices(const LWGEOM *geom);
 
 /**
+ * Calculate the GeoHash (http://geohash.org) string for a geometry. Caller must free.
+ */
+lwvarlena_t *lwgeom_geohash(const LWGEOM *lwgeom, int precision);
+
+/**
+ * Pull a #GBOX from the header of a #GSERIALIZED, if one is available. If
+ * it is not, calculate it from the geometry. If that doesn't work (null
+ * or empty) return LW_FAILURE.
+ */
+extern int gserialized_get_gbox_p(const GSERIALIZED *g, GBOX *box);
+
+/**
+ * Call this function to drop BBOX and SRID
+ * from LWGEOM. If LWGEOM type is *not* flagged
+ * with the HASBBOX flag and has a bbox, it
+ * will be released.
+ */
+extern void lwgeom_drop_bbox(LWGEOM *lwgeom);
+
+/**
  * Compute a bbox if not already computed
  *
  * After calling this function lwgeom->bbox is only
@@ -679,10 +773,38 @@ extern uint32_t lwgeom_count_vertices(const LWGEOM *geom);
 extern void lwgeom_add_bbox(LWGEOM *lwgeom);
 
 /**
+ * Drop current bbox and calculate a fresh one.
+ */
+extern void lwgeom_refresh_bbox(LWGEOM *lwgeom);
+
+/**
+ * Get a non-empty geometry bounding box, computing and
+ * caching it if not already there
+ *
+ * NOTE: empty geometries don't have a bounding box so
+ *       you'd still get a NULL for them.
+ */
+extern const GBOX *lwgeom_get_bbox(const LWGEOM *lwgeom);
+
+/**
  * Return true or false depending on whether a geometry has
  * a valid SRID set.
  */
 extern int lwgeom_has_srid(const LWGEOM *geom);
+
+/**
+ * Return true or false depending on whether a geometry is a linear
+ * feature that closes on itself.
+ */
+extern int lwgeom_is_closed(const LWGEOM *geom);
+
+/*
+ * copies a point from the point array into the parameter point
+ * will set point's z=0 (or NaN) if pa is 2d
+ * will set point's m=0 (or NaN) if pa is 3d or 2d
+ * NOTE: point is a real POINT3D *not* a pointer
+ */
+extern POINT4D getPoint4d(const POINTARRAY *pa, uint32_t n);
 
 /*
  * copies a point from the point array into the parameter point
@@ -691,6 +813,12 @@ extern int lwgeom_has_srid(const LWGEOM *geom);
  * NOTE: this will modify the point4d pointed to by 'point'.
  */
 extern int getPoint4d_p(const POINTARRAY *pa, uint32_t n, POINT4D *point);
+
+/**
+ * Deep clone an LWGEOM, everything is copied
+ */
+extern LWGEOM *lwgeom_clone_deep(const LWGEOM *lwgeom);
+extern POINTARRAY *ptarray_clone_deep(const POINTARRAY *ptarray);
 
 /*
  * Geometry constructors. These constructors to not copy the point arrays
@@ -711,14 +839,23 @@ extern LWGEOM *lwgeom_construct_empty(uint8_t type, int32_t srid, char hasz, cha
 extern LWPOINT *lwpoint_construct_empty(int32_t srid, char hasz, char hasm);
 extern LWLINE *lwline_construct_empty(int32_t srid, char hasz, char hasm);
 extern LWPOLY *lwpoly_construct_empty(int32_t srid, char hasz, char hasm);
+extern LWMLINE *lwmline_construct_empty(int32_t srid, char hasz, char hasm);
 extern LWCURVEPOLY *lwcurvepoly_construct_empty(int32_t srid, char hasz, char hasm);
 extern LWCIRCSTRING *lwcircstring_construct_empty(int32_t srid, char hasz, char hasm);
 extern LWTRIANGLE *lwtriangle_construct_empty(int32_t srid, char hasz, char hasm);
 extern LWCOLLECTION *lwcollection_construct_empty(uint8_t type, int32_t srid, char hasz, char hasm);
+extern LWMPOLY *lwmpoly_construct_empty(int32_t srid, char hasz, char hasm);
 
 /* Other constructors */
 extern LWPOINT *lwpoint_make2d(int32_t srid, double x, double y);
 extern LWPOINT *lwpoint_make3dz(int32_t srid, double x, double y, double z);
+extern LWLINE *lwline_from_lwgeom_array(int32_t srid, uint32_t ngeoms, LWGEOM **geoms);
+extern LWPOLY *lwpoly_from_lwlines(const LWLINE *shell, uint32_t nholes, const LWLINE **holes);
+extern LWPOLY *lwpoly_construct_rectangle(char hasz, char hasm, POINT4D *p1, POINT4D *p2, POINT4D *p3, POINT4D *p4);
+
+/* Some point accessors */
+extern double lwpoint_get_x(const LWPOINT *point);
+extern double lwpoint_get_y(const LWPOINT *point);
 
 unsigned int geohash_point_as_int(POINT2D *pt);
 
@@ -737,6 +874,37 @@ extern LWGEOM *lwgeom_from_geojson(const char *geojson, char **srs);
  * Initialize a spheroid object for use in geodetic functions.
  */
 extern void spheroid_init(SPHEROID *s, double a, double b);
+
+/**
+ * Calculate the geodetic distance from lwgeom1 to lwgeom2 on the spheroid.
+ * A spheroid with major axis == minor axis will be treated as a sphere.
+ * Pass in a tolerance in spheroid units.
+ */
+extern double lwgeom_distance_spheroid(const LWGEOM *lwgeom1, const LWGEOM *lwgeom2, const SPHEROID *spheroid,
+                                       double tolerance);
+
+/**
+ * Calculate the bearing between two points on a spheroid.
+ */
+extern double lwgeom_azumith_spheroid(const LWPOINT *r, const LWPOINT *s, const SPHEROID *spheroid);
+
+/**
+ * Calculate the geodetic area of a lwgeom on the sphere. The result
+ * will be multiplied by the average radius of the supplied spheroid.
+ */
+extern double lwgeom_area_sphere(const LWGEOM *lwgeom, const SPHEROID *spheroid);
+
+/**
+ * Calculate the geodetic area of a lwgeom on the spheroid. The result
+ * will have the squared units of the spheroid axes.
+ */
+extern double lwgeom_area_spheroid(const LWGEOM *lwgeom, const SPHEROID *spheroid);
+
+/**
+ * Calculate the geodetic length of a lwgeom on the unit sphere. The result
+ * will have to by multiplied by the real radius to get the real length.
+ */
+extern double lwgeom_length_spheroid(const LWGEOM *geom, const SPHEROID *s);
 
 /**
  * Global functions for memory/logging handlers.
@@ -827,6 +995,44 @@ typedef struct struct_lwgeom_parser_result {
 /* Number of digits of precision in WKT produced. */
 #define WKT_PRECISION 15
 
+struct LWPOINTITERATOR;
+typedef struct LWPOINTITERATOR LWPOINTITERATOR;
+
+/**
+ * Create a new LWPOINTITERATOR over supplied LWGEOM*
+ */
+extern LWPOINTITERATOR *lwpointiterator_create(const LWGEOM *g);
+
+/**
+ * Create a new LWPOINTITERATOR over supplied LWGEOM*
+ * Supports modification of coordinates during iteration.
+ */
+extern LWPOINTITERATOR *lwpointiterator_create_rw(LWGEOM *g);
+
+/**
+ * Free all memory associated with the iterator
+ */
+extern void lwpointiterator_destroy(LWPOINTITERATOR *s);
+
+/**
+ * Returns LW_TRUE if there is another point available in the iterator.
+ */
+extern int lwpointiterator_has_next(LWPOINTITERATOR *s);
+
+/**
+ * Attempts to assigns the next point in the iterator to p.  Does not advance.
+ * Returns LW_SUCCESS if the assignment was successful, LW_FAILURE otherwise.
+ */
+extern int lwpointiterator_peek(LWPOINTITERATOR *s, POINT4D *p);
+
+/**
+ * Attempts to assign the next point in the iterator to p, and advances
+ * the iterator to the next point.  If p is NULL, the iterator will be
+ * advanced without reading a point.
+ * Returns LW_SUCCESS if the assignment was successful, LW_FAILURE otherwise.
+ * */
+extern int lwpointiterator_next(LWPOINTITERATOR *s, POINT4D *p);
+
 /**
  * Check if a #GSERIALIZED has a bounding box without deserializing first.
  */
@@ -847,6 +1053,80 @@ extern int lwgeom_parse_wkt(LWGEOM_PARSER_RESULT *parser_result, char *wktstr, i
 void lwgeom_parser_result_init(LWGEOM_PARSER_RESULT *parser_result);
 void lwgeom_parser_result_free(LWGEOM_PARSER_RESULT *parser_result);
 
+/*******************************************************************************
+ * SQLMM internal functions
+ ******************************************************************************/
+
+int lwgeom_has_arc(const LWGEOM *geom);
+LWGEOM *lwgeom_stroke(const LWGEOM *geom, uint32_t perQuad);
+
+/**
+ * Semantic of the `tolerance` argument passed to
+ * lwcurve_linearize
+ */
+typedef enum {
+	/**
+	 * Tolerance expresses the number of segments to use
+	 * for each quarter of circle (quadrant). Must be
+	 * an integer.
+	 */
+	LW_LINEARIZE_TOLERANCE_TYPE_SEGS_PER_QUAD = 0,
+	/**
+	 * Tolerance expresses the maximum distance between
+	 * an arbitrary point on the curve and the closest
+	 * point to it on the resulting approximation, in
+	 * cartesian units.
+	 */
+	LW_LINEARIZE_TOLERANCE_TYPE_MAX_DEVIATION = 1,
+	/**
+	 * Tolerance expresses the maximum angle between
+	 * the radii generating approximation line vertices,
+	 * given in radiuses. A value of 1 would result
+	 * in an approximation of a semicircle composed by
+	 * 180 segments
+	 */
+	LW_LINEARIZE_TOLERANCE_TYPE_MAX_ANGLE = 2
+} LW_LINEARIZE_TOLERANCE_TYPE;
+
+typedef enum {
+	/**
+	 * Symmetric linearization means that the output
+	 * vertices would be the same no matter the order
+	 * of the points defining the input curve.
+	 */
+	LW_LINEARIZE_FLAG_SYMMETRIC = 1 << 0,
+
+	/**
+	 * Retain angle instructs the engine to try its best
+	 * to retain the requested angle between generating
+	 * radii (where angle can be given explicitly with
+	 * LW_LINEARIZE_TOLERANCE_TYPE_MAX_ANGLE or implicitly
+	 * with LW_LINEARIZE_TOLERANCE_TYPE_SEGS_PER_QUAD or
+	 * LW_LINEARIZE_TOLERANCE_TYPE_MAX_DEVIATION).
+	 *
+	 * It only makes sense with LW_LINEARIZE_FLAG_SYMMETRIC
+	 * which would otherwise reduce the angle as needed to
+	 * keep it constant among all radiis so that all
+	 * segments are of the same length.
+	 *
+	 * When this flag is set, the first and last generating
+	 * angles (and thus the first and last segments) may
+	 * instead be smaller (shorter) than the others.
+	 *
+	 */
+	LW_LINEARIZE_FLAG_RETAIN_ANGLE = 1 << 1
+} LW_LINEARIZE_FLAGS;
+
+/**
+ * @param geom input geometry
+ * @param tol tolerance, semantic driven by tolerance_type
+ * @param type see LW_LINEARIZE_TOLERANCE_TYPE
+ * @param flags bitwise OR of operational flags, see LW_LINEARIZE_FLAGS
+ *
+ * @return a newly allocated LWGEOM
+ */
+extern LWGEOM *lwcurve_linearize(const LWGEOM *geom, double tol, LW_LINEARIZE_TOLERANCE_TYPE type, int flags);
+
 /**
  * Return the type name string associated with a type number
  * (e.g. Point, LineString, Polygon)
@@ -865,6 +1145,15 @@ extern const char *lwtype_name(uint8_t type);
  */
 extern char *lwgeom_to_wkt(const LWGEOM *geom, uint8_t variant, int precision, size_t *size_out);
 
+/**
+ * @param geom geometry to convert to WKT
+ * @param variant output format to use (WKT_ISO, WKT_SFSQL, WKT_EXTENDED)
+ * @param precision Double precision
+ */
+extern lwvarlena_t *lwgeom_to_wkt_varlena(const LWGEOM *geom, uint8_t variant, int precision);
+
+extern lwvarlena_t *lwgeom_to_wkb_varlena(const LWGEOM *geom, uint8_t variant);
+
 extern uint8_t *bytes_from_hexbytes(const char *hexbuf, size_t hexsize);
 
 /***********************************************************************
@@ -875,6 +1164,11 @@ extern uint8_t *bytes_from_hexbytes(const char *hexbuf, size_t hexsize);
  * Check that coordinates of LWGEOM are all within the geodetic range (-180, -90, 180, 90)
  */
 extern int lwgeom_check_geodetic(const LWGEOM *geom);
+
+/**
+ * Set the FLAGS geodetic bit on geometry an all sub-geometries and pointlists
+ */
+extern void lwgeom_set_geodetic(LWGEOM *geom, int value);
 
 /**
  * Calculate the geodetic bounding box for an LWGEOM. Z/M coordinates are
@@ -942,6 +1236,11 @@ extern int gbox_merge(const GBOX *new_box, GBOX *merged_box);
 extern GBOX *gbox_copy(const GBOX *gbox);
 
 /**
+ * Return #LW_TRUE if the #GBOX overlaps, #LW_FALSE otherwise.
+ */
+extern int gbox_overlaps(const GBOX *g1, const GBOX *g2);
+
+/**
  * Initialize a #GBOX using the values of the point.
  */
 extern int gbox_init_point3d(const POINT3D *p, GBOX *gbox);
@@ -957,6 +1256,16 @@ extern int gbox_merge_point3d(const POINT3D *p, GBOX *gbox);
 extern int gbox_contains_point3d(const GBOX *gbox, const POINT3D *pt);
 
 /**
+ * Return #LW_TRUE if the #GBOX overlaps on the 2d plane, #LW_FALSE otherwise.
+ */
+extern int gbox_overlaps_2d(const GBOX *g1, const GBOX *g2);
+
+/**
+ * Return #LW_TRUE if the first #GBOX contains the second on the 2d plane, #LW_FALSE otherwise.
+ */
+extern int gbox_contains_2d(const GBOX *g1, const GBOX *g2);
+
+/**
  * Copy the values of original #GBOX into duplicate.
  */
 extern void gbox_duplicate(const GBOX *original, GBOX *duplicate);
@@ -966,6 +1275,20 @@ extern void gbox_duplicate(const GBOX *original, GBOX *duplicate);
  * serialized form.
  */
 extern size_t gbox_serialized_size(lwflags_t flags);
+
+/**
+ * Check if two given GBOX are the same in x and y, or would round to the same
+ * GBOX in x and if serialized in GSERIALIZED
+ */
+extern int gbox_same_2d_float(const GBOX *g1, const GBOX *g2);
+
+/**
+ * Round given GBOX to float boundaries
+ *
+ * This turns a GBOX into the version it would become
+ * after a serialize/deserialize round trip.
+ */
+extern void gbox_float_round(GBOX *gbox);
 
 /**
  * Extract the geometry type from the serialized form (it hides in
@@ -1009,11 +1332,76 @@ extern void *lwalloc(size_t size);
 extern void *lwrealloc(void *mem, size_t size);
 extern void lwfree(void *mem);
 
+/**
+ * Write a notice out to the notice handler.
+ *
+ * Uses standard printf() substitutions.
+ * Use for messages you always want output.
+ * For debugging, use LWDEBUG() or LWDEBUGF().
+ * @ingroup logging
+ */
+void lwnotice(const char *fmt, ...);
+
+static std::string lwgeomTypeName[] = {"Unknown",        "Point",
+                                       "LineString",     "Polygon",
+                                       "MultiPoint",     "MultiLineString",
+                                       "MultiPolygon",   "GeometryCollection",
+                                       "CircularString", "CompoundCurve",
+                                       "CurvePolygon",   "MultiCurve",
+                                       "MultiSurface",   "PolyhedralSurface",
+                                       "Triangle",       "Tin"};
+
+/**
+ * Write a notice out to the error handler.
+ *
+ * Uses standard printf() substitutions.
+ * Use for errors you always want output.
+ * For debugging, use LWDEBUG() or LWDEBUGF().
+ * @ingroup logging
+ */
 void lwerror(const char *fmt, ...);
 
 extern lwvarlena_t *lwgeom_to_geojson(const LWGEOM *geo, const char *srs, int precision, int has_bbox);
 
 extern int lwgeom_startpoint(const LWGEOM *lwgeom, POINT4D *pt);
+
+/**
+ * Snap-to-grid
+ */
+typedef struct gridspec_t {
+	double ipx;
+	double ipy;
+	double ipz;
+	double ipm;
+	double xsize;
+	double ysize;
+	double zsize;
+	double msize;
+} gridspec;
+
+extern LWGEOM *lwgeom_grid(const LWGEOM *lwgeom, const gridspec *grid);
+extern void lwgeom_grid_in_place(LWGEOM *lwgeom, const gridspec *grid);
+
+/****************************************************************
+ * READ/WRITE FUNCTIONS
+ *
+ * Coordinate writing functions, which will alter the coordinates
+ * and potentially the structure of the input geometry. When
+ * called from within PostGIS, the LWGEOM argument should be built
+ * on top of a gserialized copy, created using
+ * PG_GETARG_GSERIALIZED_P_COPY()
+ ****************************************************************/
+
+extern int lwgeom_simplify_in_place(LWGEOM *igeom, double dist, int preserve_collapsed);
+
+/*******************************************************************************
+ * GEOS proxy functions on LWGEOM
+ ******************************************************************************/
+
+LWGEOM *lwgeom_difference_prec(const LWGEOM *geom1, const LWGEOM *geom2, double gridSize);
+LWGEOM *lwgeom_intersection_prec(const LWGEOM *geom1, const LWGEOM *geom2, double gridSize);
+LWGEOM *lwgeom_union_prec(const LWGEOM *geom1, const LWGEOM *geom2, double gridSize);
+LWGEOM *lwgeom_centroid(const LWGEOM *geom);
 
 #endif /* !defined _LIBLWGEOM_H  */
 

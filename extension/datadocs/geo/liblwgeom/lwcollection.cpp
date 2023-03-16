@@ -17,9 +17,10 @@ LWCOLLECTION *lwcollection_construct(uint8_t type, int32_t srid, GBOX *bbox, uin
 	uint32_t i;
 #endif
 
-	if (!lwtype_is_collection(type))
-		// lwerror("Non-collection type specified in collection constructor!");
+	if (!lwtype_is_collection(type)) {
+		lwerror("Non-collection type specified in collection constructor!");
 		return nullptr;
+	}
 
 	hasz = 0;
 	hasm = 0;
@@ -30,10 +31,10 @@ LWCOLLECTION *lwcollection_construct(uint8_t type, int32_t srid, GBOX *bbox, uin
 		zm = FLAGS_GET_ZM(geoms[0]->flags);
 
 		for (i = 1; i < ngeoms; i++) {
-			if (zm != FLAGS_GET_ZM(geoms[i]->flags))
-				// lwerror("lwcollection_construct: mixed dimension geometries: %d/%d", zm,
-				// FLAGS_GET_ZM(geoms[i]->flags));
+			if (zm != FLAGS_GET_ZM(geoms[i]->flags)) {
+				lwerror("lwcollection_construct: mixed dimension geometries: %d/%d", zm, FLAGS_GET_ZM(geoms[i]->flags));
 				return nullptr;
+			}
 		}
 #endif
 	}
@@ -54,7 +55,7 @@ LWCOLLECTION *lwcollection_construct(uint8_t type, int32_t srid, GBOX *bbox, uin
 LWCOLLECTION *lwcollection_construct_empty(uint8_t type, int32_t srid, char hasz, char hasm) {
 	LWCOLLECTION *ret;
 	if (!lwtype_is_collection(type)) {
-		// lwerror("Non-collection type specified in collection constructor!");
+		lwerror("Non-collection type specified in collection constructor!");
 		return NULL;
 	}
 
@@ -71,6 +72,31 @@ LWCOLLECTION *lwcollection_construct_empty(uint8_t type, int32_t srid, char hasz
 }
 
 /**
+ * @brief Deep clone #LWCOLLECTION object. #POINTARRAY are copied.
+ */
+LWCOLLECTION *lwcollection_clone_deep(const LWCOLLECTION *g) {
+	uint32_t i;
+	LWCOLLECTION *ret = (LWCOLLECTION *)lwalloc(sizeof(LWCOLLECTION));
+	memcpy(ret, g, sizeof(LWCOLLECTION));
+	if (g->ngeoms > 0) {
+		ret->geoms = (LWGEOM **)lwalloc(sizeof(LWGEOM *) * g->ngeoms);
+		for (i = 0; i < g->ngeoms; i++) {
+			ret->geoms[i] = lwgeom_clone_deep(g->geoms[i]);
+		}
+		if (g->bbox)
+			ret->bbox = gbox_copy(g->bbox);
+	} else {
+		ret->bbox = NULL; /* empty collection */
+		ret->geoms = NULL;
+	}
+	return ret;
+}
+
+LWGEOM *lwcollection_getsubgeom(LWCOLLECTION *col, int gnum) {
+	return (LWGEOM *)col->geoms[gnum];
+}
+
+/**
  * Appends geom to the collection managed by col. Does not copy or
  * clone, simply takes a reference on the passed geom.
  */
@@ -79,13 +105,13 @@ LWCOLLECTION *lwcollection_add_lwgeom(LWCOLLECTION *col, const LWGEOM *geom) {
 		return NULL;
 
 	if (!col->geoms && (col->ngeoms || col->maxgeoms)) {
-		// lwerror("Collection is in inconsistent state. Null memory but non-zero collection counts.");
+		lwerror("Collection is in inconsistent state. Null memory but non-zero collection counts.");
 		return NULL;
 	}
 
 	/* Check type compatibility */
 	if (!lwcollection_allows_subtype(col->type, geom->type)) {
-		// lwerror("%s cannot contain %s element", lwtype_name(col->type), lwtype_name(geom->type));
+		lwerror("%s cannot contain %s element", lwtype_name(col->type), lwtype_name(geom->type));
 		return NULL;
 	}
 
@@ -106,8 +132,8 @@ LWCOLLECTION *lwcollection_add_lwgeom(LWCOLLECTION *col, const LWGEOM *geom) {
 		uint32_t i = 0;
 		for (i = 0; i < col->ngeoms; i++) {
 			if (col->geoms[i] == geom) {
-				// lwerror("%s [%d] found duplicate geometry in collection %p == %p", __FILE__, __LINE__, col->geoms[i],
-				// geom);
+				lwerror("%s [%d] found duplicate geometry in collection %p == %p", __FILE__, __LINE__, col->geoms[i],
+				        geom);
 				return col;
 			}
 		}
@@ -170,8 +196,9 @@ void lwcollection_free(LWCOLLECTION *col) {
 		lwfree(col->bbox);
 	}
 	for (i = 0; i < col->ngeoms; i++) {
-		if (col->geoms && col->geoms[i])
+		if (col->geoms && col->geoms[i]) {
 			lwgeom_free(col->geoms[i]);
+		}
 	}
 	if (col->geoms) {
 		lwfree(col->geoms);

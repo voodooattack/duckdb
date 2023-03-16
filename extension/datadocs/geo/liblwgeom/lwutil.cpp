@@ -1,15 +1,34 @@
+/**********************************************************************
+ *
+ * PostGIS - Spatial Types for PostgreSQL
+ * http://postgis.net
+ *
+ * PostGIS is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * PostGIS is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with PostGIS.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ **********************************************************************
+ *
+ * Copyright (C) 2004-2015 Sandro Santilli <strk@kbt.io>
+ * Copyright (C) 2006 Mark Leslie <mark.leslie@lisasoft.com>
+ * Copyright (C) 2008-2009 Mark Cave-Ayland <mark.cave-ayland@siriusit.co.uk>
+ * Copyright (C) 2009-2015 Paul Ramsey <pramsey@cleverelephant.ca>
+ * Copyright (C) 2010 Olivier Courtin <olivier.courtin@camptocamp.com>
+ *
+ **********************************************************************/
+
 #include "liblwgeom/liblwgeom.hpp"
 
 namespace duckdb {
-
-static std::string lwgeomTypeName[] = {"Unknown",        "Point",
-                                       "LineString",     "Polygon",
-                                       "MultiPoint",     "MultiLineString",
-                                       "MultiPolygon",   "GeometryCollection",
-                                       "CircularString", "CompoundCurve",
-                                       "CurvePolygon",   "MultiCurve",
-                                       "MultiSurface",   "PolyhedralSurface",
-                                       "Triangle",       "Tin"};
 
 const char *lwtype_name(uint8_t type) {
 	if (type > 15) {
@@ -94,10 +113,18 @@ lwflags_t lwflags(int hasz, int hasm, int geodetic) {
 
 void lwerror(const char *fmt, ...) {
 	va_list ap;
+	va_start(ap, fmt);
 	char buffer[100];
 	sprintf(buffer, fmt, ap);
 	throw std::runtime_error(buffer);
 }
 
+void lwnotice(const char *fmt, ...) {
+	va_list ap;
+	va_start(ap, fmt);
+
+	char buffer[100];
+	sprintf(buffer, fmt, ap);
+}
+
 } // namespace duckdb
-	

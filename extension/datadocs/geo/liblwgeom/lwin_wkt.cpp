@@ -1,4 +1,29 @@
-#include "liblwgeom/lwgeom_wkt.hpp"
+/**********************************************************************
+ *
+ * PostGIS - Spatial Types for PostgreSQL
+ * http://postgis.net
+ *
+ * PostGIS is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * PostGIS is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with PostGIS.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ **********************************************************************
+ *
+ * Copyright (C) 2009 Paul Ramsey <pramsey@cleverelephant.ca>
+ *
+ **********************************************************************/
+
+#include "liblwgeom/lwin_wkt.hpp"
+
 #include "liblwgeom/lwinline.hpp"
 #include "parser/lwin_wkt_parse.hpp"
 
@@ -734,7 +759,7 @@ LWGEOM *wkt_parser_collection_finalize(int lwtype, LWGEOM *geom, char *dimension
 void wkt_parser_geometry_new(LWGEOM *geom, int32_t srid) {
 
 	if (geom == NULL) {
-		// lwerror("Parsed geometry is null!");
+		lwerror("Parsed geometry is null!");
 		return;
 	}
 
