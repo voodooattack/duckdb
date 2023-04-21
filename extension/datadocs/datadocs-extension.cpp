@@ -9,6 +9,7 @@ void DataDocsExtension::Load(DuckDB &db) {
 	con.BeginTransaction();
 	LoadGeo(con);
 	LoadVariant(con);
+	LoadIngest(con);
 	con.Commit();
 }
 

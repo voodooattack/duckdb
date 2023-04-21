@@ -74,6 +74,10 @@ void VectorWriter::SetString(string_t data) {
 	FlatVector::GetData<string_t>(vec)[i_row] = StringVector::AddStringOrBlob(vec, data);
 }
 
+void VectorWriter::SetVectorString(string_t data) noexcept {
+	FlatVector::GetData<string_t>(vec)[i_row] = data;
+}
+
 string_t &VectorWriter::ReserveString(idx_t size) {
 	return FlatVector::GetData<string_t>(vec)[i_row] = StringVector::EmptyString(vec, size);
 }

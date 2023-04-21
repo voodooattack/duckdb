@@ -23,6 +23,8 @@
  *
  **********************************************************************/
 
+#include <cassert>
+
 #include "liblwgeom/liblwgeom_internal.hpp"
 #include "liblwgeom/lwinline.hpp"
 

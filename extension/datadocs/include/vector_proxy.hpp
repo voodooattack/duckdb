@@ -93,6 +93,7 @@ public:
 
 	void SetNull();
 	void SetString(string_t data);
+	void SetVectorString(string_t data) noexcept;
 	string_t &ReserveString(idx_t size);
 	VectorListWriter SetList() noexcept;
 	VectorStructWriter SetStruct() noexcept;
@@ -103,7 +104,7 @@ public:
 		FlatVector::GetData<T>(vec)[i_row] = v;
 	}
 
-private:
+protected:
 	Vector &vec;
 	idx_t i_row;
 };

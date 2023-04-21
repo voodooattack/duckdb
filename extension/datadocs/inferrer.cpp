@@ -1,0 +1,2991 @@
+#include <ctype.h>
+#include <cstdlib>
+#include <cctype>
+#include <cstring>
+#include <cmath>
+#include <ctime>
+#include <type_traits>
+#include <utility>
+#include <functional>
+#include <string_view>
+#include <tuple>
+#include <unordered_set>
+#include <unordered_map>
+#include <algorithm>
+#include <sstream>
+#include <iomanip>
+#include <regex>
+
+#include <boost/iterator/indirect_iterator.hpp>
+#include <boost/unordered_map.hpp>
+
+#include <vector_converter.hpp>
+
+#include "xls/xlscommon.h"
+
+#include "inferrer_impl.h"
+#include "file_reader.h"
+#include "csv_reader.h"
+#include "xls_reader.h"
+#include "zip_reader.h"
+#include "json_reader.h"
+#include "xml_reader.h"
+#include "utility.h"
+#include "type_conv.h"
+#include "wkt.h"
+
+using namespace std::literals;
+using namespace std::string_literals;
+
+namespace std
+{
+	template<> struct hash<Ingest::CellRawDate>
+	{
+		size_t operator() (const Ingest::CellRawDate& v) const noexcept
+		{
+			return std::hash<double>()(v.d);
+		}
+	};
+}
+
+namespace Ingest {
+
+const ErrorType ErrorType::NoErrorValue = {};
+	
+/* ========= merge with xls_common from master ========= */
+static const double pow_10[] =
+{
+	1e+0,
+	1e+1,  1e+2,  1e+3,  1e+4,  1e+5,  1e+6,  1e+7,  1e+8,  1e+9,  1e+10, 1e+11, 1e+12, 1e+13, 1e+14, 1e+15, 1e+16, 1e+17, 1e+18, 1e+19, 1e+20,
+	1e+21, 1e+22
+}; 
+
+double fast_strtod(const char* str, char **endptr)
+{
+	const char* s = str;
+	uint64_t n = 0;
+	int exp = 0;
+	int frac_length = 0;
+	size_t c;
+
+	while (*s == ' ' || *s == '\t' || *s == '\r' || *s == '\n')
+		++s;
+
+	bool minus = *s == '-';
+	if (minus || *s == '+')
+		++s;
+
+	while ((c = size_t(*s - '0')) <= 9)
+	{
+		n = n * 10 + c;
+		++s;
+	}
+
+	if (*s == '.')
+	{
+		++s;
+		const char* frac_start = s;
+		while ((c = size_t(*s - '0')) <= 9)
+		{
+			n = n * 10 + c;
+			++s;
+		}
+		frac_length = s - frac_start;
+	}
+
+	if (*s == 'E' || *s == 'e')
+	{
+		++s;
+		bool exp_minus = *s == '-';
+		if (exp_minus || *s == '+')
+			++s;
+		while ((c = size_t(*s - '0')) <= 9)
+		{
+			exp = exp * 10 + c;
+			++s;
+		}
+		if (exp_minus)
+			exp = -exp;
+	}
+
+	exp -= frac_length;
+	double d = (double)n;
+
+	if (exp > 22 && exp < 22 + 16)
+	{
+		d *= pow_10[exp - 22];
+		exp = 22;
+	}
+
+	if (exp >= -22 && exp <= 22 && d <= 9007199254740991.0)
+	{
+		if (exp < 0)
+			d /= pow_10[-exp];
+		else
+			d *= pow_10[exp];
+		if(endptr) *endptr = (char*)s;
+		return minus ? -d : d;
+	}
+	return strtod(str, endptr);
+}
+/* ========== end of to-merge ============= */
+
+static bool cell_empty(const CellRaw& cell)
+{
+	const std::string* s = std::get_if<std::string>(&cell);
+	return s && s->empty();
+}
+
+static bool cell_null_str(const CellRaw& cell)
+{
+	const std::string* s = std::get_if<std::string>(&cell);
+	return s && (*s == "NULL" || *s == "null");
+}
+
+Parser* Parser::get_parser(const std::string& filename)
+{
+	return ParserImpl::get_parser_from_reader(std::make_shared<FileReader>(filename));
+}
+
+template <class Parser>
+ParserImpl* create_parser(std::shared_ptr<BaseReader> reader)
+{
+	return new Parser(reader);
+}
+
+static const std::unordered_map<std::string, decltype(&create_parser<CSVParser>)> parser_extensions {
+	{"xls", create_parser<XLSParser>},
+	{"xlt", create_parser<XLSParser>},
+	{"xlsx", create_parser<XLSXParser>},
+	{"xlsm", create_parser<XLSXParser>},
+	{"xltx", create_parser<XLSXParser>},
+	{"xltm", create_parser<XLSXParser>},
+	{"json", create_parser<JSONParser>},
+	{"geojson", create_parser<JSONParser>},
+	{"xml", create_parser<XMLParser>},
+	{"zip", create_parser<ZIPParser>},
+	{"wkt", create_parser<WKTParser>},
+};
+
+static const std::regex _re_is_xml_file(R"(\s*<(\?xml|!--|!DOCTYPE|\w+(\s|>|/>)))", std::regex::nosubs);
+static const std::regex _re_is_json_file(R"(\s*(\{\s*"([^"\\]|\\.)*"\s*:|\[)\s*(["{[0-9.\-]|true|false|null))", std::regex::nosubs);
+
+ParserImpl* ParserImpl::get_parser_from_reader(std::shared_ptr<BaseReader> reader)
+{
+	ParserImpl* parser = nullptr;
+	const std::string& fname = reader->filename();
+	size_t pos_ext = fname.find_last_of("./\\");
+	if (pos_ext == std::string::npos || fname[pos_ext] == '/' || fname[pos_ext] == '\\') // no extension
+	{
+		if (!reader->open())
+			return nullptr;
+		reader->skip_prefix("\xEF\xBB\xBF"sv);
+		const size_t preview_size = 100;
+		char data[preview_size+1];
+		data[reader->read(data, preview_size)] = 0;
+		reader->close();
+		if (std::regex_search(data, _re_is_xml_file, std::regex_constants::match_continuous))
+			return new XMLParser(reader);
+		if (std::regex_search(data, _re_is_json_file))
+			return new JSONParser(reader);
+		return new CSVParser(reader);
+	}
+
+	std::string ext = fname.substr(pos_ext+1);
+	std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+	auto it = parser_extensions.find(ext);
+	if (it == parser_extensions.end())
+		return create_parser<CSVParser>(reader);
+	return it->second(reader);
+}
+
+void ParserImpl::close() {}
+
+static int ConvertToString(CellRaw& src, Cell& dst, const ColumnDefinition& format)
+{
+	std::visit(overloaded{
+	[&](std::string& s) { dst = std::move(s); },
+	[&](int64_t v) { dst = std::to_string(v); },
+	[&](bool v) { dst.emplace<std::string>(v ? "true" : "false"); },
+	[&](double v) { std::ostringstream ss; ss << v; dst = ss.str(); },
+	[&](const CellRawDate& v)
+	{
+		double value = v.d;
+		const char* fmt;
+		std::tm tm = {};
+		if (value >= 1.0)
+		{
+			int l = (int)value + 68569 + 2415019;
+			int n = 4 * l / 146097;
+			l -= (146097 * n + 3) / 4;
+			int i = 4000 * (l + 1) / 1461001;
+			l -= 1461 * i / 4 - 31;
+			int j = 80 * l / 2447;
+			tm.tm_mday = l - 2447 * j / 80;
+			l = j / 11;
+			tm.tm_mon = j + 2 - 12 * l - 1;
+			tm.tm_year = 100 * (n - 49) + i + l - 1900;
+			/*tm.tm_year = 400;
+			tm.tm_mday = (int)value - 1;
+			std::mktime(&tm);
+			tm.tm_year -= 400;*/
+		}
+		if (value != std::trunc(value))
+		{
+			int time = std::lround((value - int(value)) * 86400.0);
+			tm.tm_hour = time / 3600;
+			time %= 3600;
+			tm.tm_min = time / 60;
+			tm.tm_sec = time % 60;
+			fmt = value > 1.0 ? "%Y-%m-%d %H:%M:%S" : "%H:%M:%S";
+		}
+		else
+			fmt = "%Y-%m-%d";
+		std::ostringstream ss;
+		ss << std::put_time(&tm, fmt);
+		dst = ss.str();
+	}
+	}, src);
+	return 1;
+}
+
+static std::string ConvertRawToString(CellRaw& src)
+{
+	Cell tmp;
+	ConvertToString(src, tmp, ColumnDefinition());
+	return std::move(std::get<std::string>(tmp));
+}
+
+static const std::unordered_map<std::string, bool> _bool_dict {
+	{"0", false}, {"1", true},
+	{"false", false}, {"False", false}, {"FALSE", false}, {"true", true}, {"True", true}, {"TRUE", true},
+	{"n", false}, {"N", false}, {"no", false}, {"No", false}, {"NO", false},
+	{"y", true}, {"Y", true}, {"yes", true}, {"Yes", true}, {"YES", true}
+};
+
+static int ConvertToBool(CellRaw& src, Cell& dst, const ColumnDefinition& format)
+{
+	return std::visit(overloaded{
+	[&](const std::string& s) -> int
+	{
+		if (s.empty())
+			return 0;
+		auto it = _bool_dict.find(s);
+		if (it == _bool_dict.end())
+			return -1; //throw std::invalid_argument("invalid value");
+		dst = it->second;
+		return 1;
+	},
+	[&](bool v) -> int
+	{
+		dst = v;
+		return 1;
+	},
+	[&](int64_t v) -> int
+	{
+		if (v != 0 && v != 1)
+			return -1;
+		dst = (bool)v;
+		return 1;
+	},
+	[](auto v) -> int
+	{ return -1;},
+	}, src);
+}
+
+static int ConvertToInteger(CellRaw& src, Cell& dst, const ColumnDefinition& format)
+{
+	return std::visit(overloaded{
+	[&](const std::string& s) -> int
+	{
+		if (s.empty())
+			return 0;
+
+		//xls::CellValue value;
+		//if (!xls::parse_number(s.data(), value, false))
+		//	return -1;
+		//if (value.type == xls::CellType::Integer)
+		//	dst = value.value_i;
+		//else
+		//{
+		//	double d = value.value_d;
+		//	if (!is_integer(d))
+		//		return -1;
+		//	dst = (int64_t)d;
+		//}
+
+		char* endptr; //size_t pos;
+		int64_t v = std::strtoll(s.data(), &endptr, 10); //std::stoll(s, &pos);
+		if (*endptr) //(pos != s.size())
+		{
+			xls::CellValue value;
+			if (!xls::parse_number(s.data(), value, true))
+				return -1;
+			double d = value.value_d;
+			if (!is_integer(d))
+				return -1;
+			//double d = std::strtod(s.data(), &endptr);
+			//if (*endptr || !is_integer(d))
+			//	return -1;
+			dst = (int64_t)d;
+			return 1;
+		}
+		dst = v;
+		return 1;
+	},
+	[&](double v) -> int
+	{
+		if (!is_integer(v))
+			return -1;
+		dst = (int64_t)v;
+		return 1;
+	},
+	[&](auto v) -> int
+	{
+		if constexpr (std::is_integral_v<decltype(v)>)
+		{
+			dst = static_cast<int64_t>(v);
+			return 1;
+		}
+		else
+			return -1;
+	},
+	}, src);
+}
+
+static int ConvertToDouble(CellRaw& src, Cell& dst, const ColumnDefinition& format)
+{
+	return std::visit(overloaded{
+	[&](const std::string& s) -> int
+	{
+		if (s.empty())
+			return 0;
+		xls::CellValue value;
+		if (!xls::parse_number(s.data(), value, true))
+			return -1;
+		dst = value.value_d;
+		//char* endptr; //size_t pos;
+		//double v = std::strtod(s.data(), &endptr); //double v = std::stod(s, &pos);
+		//if (*endptr) //(pos != s.size())
+		//	return -1; //throw std::invalid_argument("invalid value");
+		//dst = v;
+		return 1;
+	},
+	[&](auto v) -> int
+	{
+		if constexpr (std::is_arithmetic_v<decltype(v)>)
+		{
+			dst = static_cast<double>(v);
+			return 1;
+		}
+		else
+			return -1;
+	},
+	}, src);
+}
+
+static int ConvertToDate(CellRaw& src, Cell& dst, const ColumnDefinition& format)
+{
+	return std::visit(overloaded{
+	[&](const std::string& s) -> int
+	{
+		if (s.empty())
+			return 0;
+		// dst.emplace<int32_t>((int)strptime(s, format.format));
+		double t;
+		if (!strptime(s, format.format, t))
+			return -1;
+		dst.emplace<int32_t>((int)t);
+		return 1;
+	},
+	[&](const CellRawDate& v) -> int
+	{
+		dst.emplace<int32_t>((int)v.d);
+		return 1;
+	},
+	[](auto v) -> int { return -1; },
+	}, src);
+}
+
+static int ConvertToTime(CellRaw& src, Cell& dst, const ColumnDefinition& format)
+{
+	return std::visit(overloaded{
+	[&](const std::string& s) -> int
+	{
+		if (s.empty())
+			return 0;
+		double t; // = strptime(s, format.format);
+		if (!strptime(s, format.format, t))
+			return -1;
+		dst.emplace<double>(t); // - 1462); //  - int(t) default date is 1.1.1904
+		return 1;
+	},
+	[&](const CellRawDate& v) -> int
+	{
+		dst.emplace<double>(v.d); // - std::trunc(v.d)
+		return 1;
+	},
+	[](auto v) -> int { return -1; },
+	}, src);
+}
+
+static int ConvertToDateTime(CellRaw& src, Cell& dst, const ColumnDefinition& format)
+{
+	return std::visit(overloaded{
+	[&](const std::string& s) -> int
+	{
+		if (s.empty())
+			return 0;
+		//dst.emplace<double>(strptime(s, format.format));
+		double t;
+		if (!strptime(s, format.format, t))
+			return -1;
+		dst.emplace<double>(t);
+		return 1;
+	},
+	[&](const CellRawDate& v) -> int
+	{
+		dst.emplace<double>(v.d);
+		return 1;
+	},
+	[](auto v) -> int { return -1; },
+	}, src);
+}
+
+static const uint8_t _base64tbl[256] = {
+	 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+	 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
+	 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 62, 63, 62, 62, 63, // +,-./
+	52, 53, 54, 55, 56, 57, 58, 59, 60, 61,  0,  0,  0,  0,  0,  0, // 0-9
+	 0,  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, // a-o
+	15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,  0,  0,  0,  0, 63, // p-z _
+	 0, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, // A-O
+	41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51                      // P-Z
+};
+
+static int ConvertToBytes(CellRaw& src, Cell& dst, const ColumnDefinition& format)
+{
+	return std::visit(overloaded{
+	[&](const std::string& s) -> int
+	{
+		if (s.empty())
+			return 0;
+		if (format.format == "base64")
+		{
+			size_t len_full = s.size();
+			while (s[len_full - 1] == '=')
+				--len_full;
+			size_t len_tail = len_full % 4;
+			if (len_tail == 1)
+				return -1;
+			len_full -= len_tail;
+			std::string& res = dst.emplace<std::string>(len_full / 4 * 3 + (len_tail > 0 ? len_tail-1 : 0), '\0');
+			const unsigned char* src = (const unsigned char*)s.data();
+			size_t i_write = 0;
+			for (size_t i_read = 0; i_read < len_full; i_read += 4)
+			{
+				uint32_t n = _base64tbl[src[i_read]] << 18 | _base64tbl[src[i_read + 1]] << 12 | _base64tbl[src[i_read + 2]] << 6 | _base64tbl[src[i_read + 3]];
+				res[i_write++] = n >> 16;
+				res[i_write++] = (n >> 8) & 0xFF;
+				res[i_write++] = n & 0xFF;
+			}
+			if (len_tail > 0)
+			{
+				uint32_t n = _base64tbl[src[len_full]] << 18 | _base64tbl[src[len_full + 1]] << 12;
+				res[i_write++] = n >> 16;
+				if (len_tail == 3)
+				{
+					n |= _base64tbl[src[len_full + 2]] << 6;
+					res[i_write] = (n >> 8) & 0xFF;
+				}
+			}
+		}
+		else
+		{
+			if (s.size() % 2 != 0)
+				return -1;
+			size_t i_read = (s[1] == 'x' || s[1] == 'X') && s[0] == '0' ? 2 : 0;
+			std::string& res = dst.emplace<std::string>((s.size() - i_read) / 2, '\0');
+			if (!string0x_to_bytes(&s[i_read], &s[s.size()], res.data()))
+				return -1;
+		}
+		return 1;
+	},
+	[](auto v) -> int { return -1; },
+	}, src);
+}
+
+static int ConvertToNumeric(CellRaw& src, Cell& dst, const ColumnDefinition& format)
+{
+	return std::visit(overloaded{
+	[&](const std::string& s) -> int
+	{
+		if (s.empty())
+			return 0;
+		std::string& res = dst.emplace<std::string>();
+		return string_to_decimal(s.data(), s.data() + s.size(), res) ? 1 : -1;
+	},
+	[&](auto v) -> int
+	{
+		if constexpr (std::is_arithmetic_v<decltype(v)>)
+		{
+			dst = static_cast<double>(v);
+			return 1;
+		}
+		else
+			return -1;
+	},
+	}, src);
+}
+
+static int ConvertWKT(CellRaw& src, Cell& dst, const ColumnDefinition& format)
+{
+	const std::string* sp = std::get_if<std::string>(&src);
+	if (!sp)
+		return -1;
+	if (sp->empty())
+		return 0;
+	std::string& res = dst.emplace<std::string>();
+	const char* begin = sp->data();
+	const char* end = begin + sp->size();
+	return wkt_to_bytes(begin, end, res) && begin == end ? 1 : -1;
+}
+
+static int ConvertWKTList(CellRaw& src, Cell& dst, const ColumnDefinition& format)
+{
+	const std::string* sp = std::get_if<std::string>(&src);
+	if (!sp)
+		return -1;
+	if (sp->empty())
+		return 0;
+	const char* begin = sp->data();
+	const char* end = begin + sp->size();
+	if (*begin == '<')
+	{
+		if (*--end != '>')
+			return -1;
+		while (std::isspace(*++begin));
+	}
+	std::vector<Cell> values;
+	while (begin < end)
+	{
+		if (!wkt_to_bytes(begin, end, std::get<std::string>(values.emplace_back(std::in_place_type<std::string>))))
+			return -1;
+		while (std::isspace(*begin) || *begin == ',')
+			++begin;
+	}
+	if (begin != end)
+		return -1;
+	dst.emplace<std::vector<Cell>>(std::move(values));
+	return 1;
+}
+
+static ConvertFunc _converters[] = { ConvertToString, ConvertToBool, ConvertToInteger, ConvertToDouble, ConvertToDate, ConvertToTime, ConvertToDateTime, ConvertToBytes, ConvertToNumeric, ConvertWKT };
+
+static int ConvertToList(CellRaw& src, Cell& dst, const ColumnDefinition& format)
+{
+	const std::string* sp = std::get_if<std::string>(&src);
+	if (!sp)
+		return -1;
+	const std::string& s = *sp;
+	if (s.empty())
+		return 0;
+	ConvertFunc converter = _converters[static_cast<size_t>(format.column_type)];
+	std::vector<Cell> values;
+
+	size_t pos, last_pos, new_pos, end_pos;
+	if (s.front() == '<' && s.back() == '>')
+	{
+		pos = 1;
+		last_pos = s.size() - 1;
+		while (pos < last_pos && std::isspace(s[pos]))
+			++pos;
+		while (pos < last_pos && std::isspace(s[last_pos - 1]))
+			--last_pos;
+		if (pos == last_pos) // empty list "<   >"
+		{
+			dst.emplace<std::vector<Cell>>(std::move(values));
+			return 1;
+		}
+	}
+	else
+	{
+		pos = 0;
+		last_pos = s.size();
+	}
+	while (true)
+	{
+		new_pos = end_pos = s.find(',', pos);
+		if (end_pos == std::string::npos)
+			end_pos = last_pos;
+		while (pos < end_pos && std::isspace(s[pos]))
+			++pos;
+		while (pos < end_pos && std::isspace(s[end_pos - 1]))
+			--end_pos;
+		CellRaw value = s.substr(pos, end_pos - pos);
+		if (converter(value, values.emplace_back(), format) != 1)
+			return -1;
+		if (new_pos == std::string::npos)
+			break;
+		pos = new_pos + 1;
+	}
+	dst.emplace<std::vector<Cell>>(std::move(values));
+	return 1;
+}
+
+/*class JSONFileAdapter : public Row::ColumnAdapter
+{
+public:
+	JSONFileAdapter(Row* row) : m_row(row) {}
+	virtual ~JSONFileAdapter() = default;
+	virtual ColumnAdapter* column_adapter(size_t i_col) { return m_row->column_adapter(i_col); };
+	virtual void set_value(Cell& value) {};
+	virtual void set_notnull() {};
+	virtual void append(bool not_null) {};
+private:
+	Row* m_row;
+};
+
+class XMLBase
+{
+public:
+	static XMLBase* create(const ColumnDefinition& col, Row::ColumnAdapter* adapter);
+	virtual ~XMLBase() = default;
+	virtual XMLBase* new_tag(const char* name, const char** atts) { return nullptr; }
+	virtual void first_tag() {}
+	virtual bool second_tag() { return false; }
+	virtual bool new_text(std::string&& s) { return true; }
+	bool m_saw_tag;
+};
+
+class XMLValueBase : public XMLBase
+{
+public:
+	XMLValueBase(const ColumnDefinition& col, Row::ColumnAdapter* adapter) :
+		m_adapter(adapter),
+		m_col(col),
+		m_converter(_converters[static_cast<size_t>(col.column_type)])
+	{}
+	virtual ~XMLValueBase() = default;
+protected:
+	Row::ColumnAdapter* m_adapter;
+	const ColumnDefinition& m_col;
+	ConvertFunc m_converter;
+	Cell m_cell;
+	CellRaw m_raw_cell;
+};
+
+class XMLValue : public XMLValueBase
+{
+public:
+	using XMLValueBase::XMLValueBase;
+	virtual bool new_text(std::string&& s) override
+	{
+		m_raw_cell = std::move(s);
+		int res = m_converter(m_raw_cell, m_cell, m_col);
+		if (res > 0)
+			m_adapter->set_value(m_cell);
+		return res >= 0;
+	}
+};
+
+class XMLList : public XMLValueBase
+{
+public:
+	using XMLValueBase::XMLValueBase;
+	virtual void first_tag() override { m_adapter->set_notnull(); }
+	virtual bool second_tag() override { return true; }
+	virtual bool new_text(std::string&& s) override
+	{
+		m_raw_cell = std::move(s);
+		int res = m_converter(m_raw_cell, m_cell, m_col);
+		if (res <= 0)
+			return false;
+		m_adapter->set_value(m_cell);
+		return true;
+	}
+};
+
+class XMLStruct : public XMLBase
+{
+public:
+	XMLStruct(const std::vector<ColumnDefinition>& fields, Row::ColumnAdapter* adapter) :
+		m_adapter(adapter)
+	{
+		for (size_t i_col = 0; i_col < fields.size(); ++i_col)
+		{
+			m_map.emplace(
+				fields[i_col].column_name,
+				XMLBase::create(fields[i_col], adapter->column_adapter(i_col))
+			);
+		}
+	}
+	virtual ~XMLStruct() = default;
+	virtual void first_tag() override
+	{
+		m_adapter->set_notnull();
+		for (auto& v : m_map)
+			v.second->m_saw_tag = false;
+	}
+	virtual XMLBase* new_tag(const char* name, const char** atts) override
+	{
+		auto it = m_map.find(std::string(name));
+		if (it == m_map.end())
+			return nullptr;
+		XMLBase* obj = it->second.get();
+		if (!obj->m_saw_tag)
+		{
+			obj->first_tag();
+			obj->m_saw_tag = true;
+		}
+		else if (!obj->second_tag())
+			return nullptr;
+		if (atts)
+			for (; *atts; atts += 2)
+			{
+				XMLBase* attr_obj = obj->new_tag(*atts, nullptr);
+				if (attr_obj && !attr_obj->new_text(std::string(atts[1])))
+					return nullptr;
+			}
+		return obj;
+	}
+	virtual bool new_text(std::string&& s) override
+	{
+		XMLBase* obj = new_tag("#text", nullptr);
+		return !obj || obj->new_text(std::move(s));
+	}
+
+protected:
+	Row::ColumnAdapter* m_adapter;
+	std::unordered_map<std::string, std::unique_ptr<XMLBase>> m_map;
+};
+
+class XMLListStruct : public XMLStruct
+{
+public:
+	using XMLStruct::XMLStruct;
+	virtual void first_tag() override
+	{
+		m_adapter->set_notnull();
+		second_tag();
+	}
+	virtual bool second_tag() override
+	{
+		m_adapter->append(true);
+		for (auto& v : m_map)
+			v.second->m_saw_tag = false;
+		return true;
+	}
+};
+
+class XMLTopListStruct : public XMLBase
+{
+public:
+	XMLTopListStruct(XMLParser& parser, Row* row) :
+		m_parser(parser),
+		m_columns(parser.get_schema()->columns),
+		m_row(row),
+		m_adapter(row),
+		m_struct(m_columns, &m_adapter),
+		m_row_number(0)
+	{}
+	virtual ~XMLTopListStruct() = default;
+	virtual XMLBase* new_tag(const char* name, const char** atts) override
+	{
+		++m_row_number;
+		//if (!m_row->new_row(m_parser.get_percent_complete()))
+		//	return nullptr;
+		size_t n_columns = m_columns.size();
+		for (size_t i_col = 0; i_col < n_columns; ++i_col)
+		{
+			const ColumnDefinition& col = m_columns[i_col];
+			if (col.index >= 0)
+				m_row->write_null(i_col);
+			else // if (col.index == COL_ROWNUM)
+			{
+				m_value.emplace<int32_t>(m_row_number);
+				m_row->write_value(i_col, m_value);
+			}
+		}
+		m_struct.first_tag();
+		if (atts)
+			for (; *atts; atts += 2)
+			{
+				XMLBase* attr_obj = m_struct.new_tag(*atts, nullptr);
+				if (attr_obj && !attr_obj->new_text(std::string(atts[1])))
+					return nullptr;
+			}
+		return &m_struct;
+	}
+
+protected:
+	XMLParser& m_parser;
+	const std::vector<ColumnDefinition>& m_columns;
+	Row* m_row;
+	JSONFileAdapter m_adapter;
+	XMLStruct m_struct;
+	int32_t m_row_number;
+	Cell m_value;
+};
+
+class XMLRoot : public XMLBase
+{
+public:
+	void assign(XMLBase* xml) { m_root.reset(xml); }
+	virtual ~XMLRoot() = default;
+	virtual XMLBase* new_tag(const char* name, const char** atts) override
+	{
+		m_root->first_tag();
+		return m_root.get();
+	}
+protected:
+	std::unique_ptr<XMLBase> m_root;
+};
+
+XMLBase* XMLBase::create(const ColumnDefinition& col, Row::ColumnAdapter* adapter)
+{
+	if (col.column_type == ColumnType::Struct)
+		if (col.is_list)
+			return new XMLListStruct(col.fields, adapter);
+		else
+			return new XMLStruct(col.fields, adapter);
+	else
+		if (col.is_list)
+			return new XMLList(col, adapter);
+		else
+			return new XMLValue(col, adapter);
+}
+
+class XMLParseHandler : public XMLHandler<XMLParseHandler>
+{
+public:
+	XMLParseHandler(XMLBase* top = nullptr) : m_top(top) {}
+
+	bool start_tag(const char* name, const char** atts)
+	{
+		XMLBase* new_top = m_top->new_tag(name, atts);
+		if (!new_top)
+			return false;
+		m_stack.push_back(m_top);
+		m_top = new_top;
+		return true;
+	}
+
+	void end_tag()
+	{
+		m_top = m_stack.back();
+		m_stack.pop_back();
+	}
+
+	bool new_text()
+	{
+		bool res = m_top->new_text(std::move(m_cur_text));
+		m_cur_text.clear();
+		return res;
+	};
+
+	bool convert_cell(CellRaw& src, XMLBase* root)
+	{
+		const std::string* sp = std::get_if<std::string>(&src);
+		if (!sp)
+			return false;
+		if (sp->empty())
+			return true;
+		m_top = root;
+		m_stack.clear();
+		m_cur_text.clear();
+		return parse_string(*sp);
+	}
+private:
+	XMLBase* m_top;
+	std::vector<XMLBase*> m_stack;
+};
+
+template<class Value>
+class JSONListWrapper : public JSONHandler
+{
+public:
+	template<typename... Args>
+	JSONListWrapper(Args&&... args) : m_value(std::forward<Args>(args)...) {}
+	virtual bool StartArray(JSONDispatcher* dispatcher) override { m_value.init_list_value(dispatcher); return true; }
+private:
+	Value m_value;
+};
+
+class JSONBase : public JSONHandler
+{
+public:
+	static JSONHandler* create(const ColumnDefinition& col, Row::ColumnAdapter* adapter);
+	virtual bool Bool(bool b) override { return new_value(CellRaw(b)); }
+	virtual bool Int(int i) override { return new_value(CellRaw((int64_t)i)); }
+	virtual bool Uint(unsigned i) override { return new_value(CellRaw((int64_t)i)); }
+	virtual bool Int64(int64_t i) override { return new_value(CellRaw(i)); }
+	virtual bool Uint64(uint64_t i) override { return new_value(CellRaw((int64_t(i < INT64_MAX ? i : INT64_MAX)))); }
+	virtual bool Double(double d) override { return new_value(CellRaw(d)); }
+	virtual bool String(const char* s, int length, bool copy) override { return new_value(CellRaw(std::string(s, length))); }
+	virtual bool new_value(CellRaw&& cell) { return false; }
+};
+
+class JSONValueBase : public JSONBase
+{
+public:
+	JSONValueBase(const ColumnDefinition& col, Row::ColumnAdapter* adapter) :
+		m_adapter(adapter),
+		m_col(col),
+		m_converter(_converters[static_cast<size_t>(col.column_type)])
+	{}
+	virtual ~JSONValueBase() = default;
+protected:
+	Row::ColumnAdapter* m_adapter;
+	const ColumnDefinition& m_col;
+	ConvertFunc m_converter;
+	Cell m_value;
+};
+
+class JSONValue : public JSONValueBase
+{
+public:
+	using JSONValueBase::JSONValueBase;
+	virtual bool new_value(CellRaw&& cell) override
+	{
+		int res = m_converter(cell, m_value, m_col);
+		if (res > 0)
+			m_adapter->set_value(m_value);
+		return res >= 0;
+	}
+};
+
+class JSONList : public JSONValueBase
+{
+public:
+	using JSONValueBase::JSONValueBase;
+	virtual bool Null() override { return false; }
+
+	virtual bool StartArray(JSONDispatcher* dispatcher) override
+	{
+		if (m_found_value && m_level >= m_dimensions.size())
+			return false;
+		if (m_dimensions.size() > m_level)
+			m_dimensions[m_level].second = 0;
+		else
+			m_dimensions.push_back({ 0, -1 });
+		if (m_level > 0)
+			if (auto& this_level = m_dimensions[m_level-1]; this_level.second == -1)
+				++this_level.first;
+			else
+				++this_level.second;
+		++m_level;
+		return true;
+	}
+
+	virtual bool EndArray(JSONDispatcher* dispatcher) override
+	{
+		if (m_level == 0)
+		{
+			if (!m_dimensions.empty())
+				m_adapter->set_dimensions(m_dimensions);
+			dispatcher->pop();
+			return true;
+		}
+		--m_level;
+		auto& this_level = m_dimensions[m_level];
+		if (this_level.second != -1 && this_level.second != this_level.first)
+			return false;
+		return m_found_value;
+	}
+
+	virtual bool new_value(CellRaw&& cell) override
+	{
+		if (!m_found_value)
+			m_found_value = true;
+		else if (m_level != m_dimensions.size())
+			return false;
+		if (m_level > 0)
+			if (auto& this_level = m_dimensions[m_level-1]; this_level.second == -1)
+				++this_level.first;
+			else
+				++this_level.second;
+
+		int res = m_converter(cell, m_value, m_col);
+		if (res <= 0)
+			return false;
+		m_adapter->set_value(m_value);
+		return true;
+	}
+
+	void init_list_value(JSONDispatcher* dispatcher)
+	{
+		m_level = 0;
+		m_found_value = false;
+		m_dimensions.clear();
+		m_adapter->set_notnull();
+		dispatcher->push(this);
+		dispatcher->m_value = this;
+	}
+
+private:
+	int m_level;
+	bool m_found_value;
+	std::vector<std::pair<int, int>> m_dimensions;
+};
+
+class JSONStruct : public JSONHandler
+{
+public:
+	typedef std::unordered_map<std::string, std::unique_ptr<JSONHandler>> TKeyMap;
+	JSONStruct(const std::vector<ColumnDefinition>& fields, Row::ColumnAdapter* adapter) :
+		m_adapter(adapter)
+	{
+		for (size_t i_col = 0; i_col < fields.size(); ++i_col)
+		{
+			if (fields[i_col].index >= 0)
+				m_map.emplace(
+					fields[i_col].column_name,
+					JSONBase::create(fields[i_col], adapter->column_adapter(i_col))
+				);
+		}
+	}
+	JSONStruct(TKeyMap&& map, Row::ColumnAdapter* adapter) :
+		m_adapter(adapter),
+		m_map(std::move(map))
+	{}
+	virtual ~JSONStruct() = default;
+	virtual bool StartObject(JSONDispatcher* dispatcher) override
+	{
+		m_adapter->set_notnull();
+		dispatcher->push(this);
+		return true;
+	}
+	virtual bool Key(const char* s, int length, bool copy, JSONDispatcher* dispatcher) override
+	{
+		auto it = m_map.find(std::string(s, length));
+		if (it == m_map.end())
+			return false;
+		dispatcher->m_value = it->second.get();
+		return true;
+	}
+
+public:
+	Row::ColumnAdapter* m_adapter;
+	TKeyMap m_map;
+};
+
+class JSONListStruct : public JSONStruct
+{
+public:
+	using JSONStruct::JSONStruct;
+	virtual bool Null() override { m_adapter->append(false); return true; }
+	virtual bool StartObject(JSONDispatcher* dispatcher) override { m_adapter->append(true); return true; }
+	virtual bool EndObject(JSONDispatcher* dispatcher) override { dispatcher->m_value = this; return true; }
+	void init_list_value(JSONDispatcher* dispatcher)
+	{
+		m_adapter->set_notnull();
+		dispatcher->push(this);
+		dispatcher->m_value = this;
+	}
+};
+
+class JSONTopListStruct : public JSONStruct
+{
+public:
+	JSONTopListStruct(JSONParser& parser, Row* row, JSONFileAdapter* adapter) :
+		JSONStruct(parser.get_schema()->columns, adapter),
+		m_parser(parser),
+		m_columns(parser.get_schema()->columns),
+		m_row(row),
+		m_row_number(0),
+		m_is_aborted(false)
+	{}
+	virtual ~JSONTopListStruct() = default;
+	virtual bool StartObject(JSONDispatcher* dispatcher) override
+	{
+		++m_row_number;
+		//if(!m_row->new_row(m_parser.get_percent_complete()))
+		//{
+		//	m_is_aborted = true;
+		//	return false;
+		//}
+		size_t n_columns = m_columns.size();
+		for (size_t i_col = 0; i_col < n_columns; ++i_col)
+		{
+			const ColumnDefinition& col = m_columns[i_col];
+			if (col.index >= 0)
+				m_row->write_null(i_col);
+			else // if (col.index == COL_ROWNUM)
+			{
+				m_value.emplace<int32_t>(m_row_number);
+				m_row->write_value(i_col, m_value);
+			}
+		}
+		return true;
+	}
+	virtual bool EndObject(JSONDispatcher* dispatcher) override { dispatcher->m_value = this; return true; }
+
+protected:
+	JSONParser& m_parser;
+	const std::vector<ColumnDefinition>& m_columns;
+	Row* m_row;
+	int32_t m_row_number;
+	Cell m_value;
+public:
+	bool m_is_aborted;
+};
+
+class JSONGeoStruct : public JSONHandler
+{
+public:
+	JSONGeoStruct(Row::ColumnAdapter* adapter) :
+		m_adapter(adapter),
+		m_cell(std::in_place_type<std::string>),
+		m_data(std::get<std::string>(m_cell)),
+		m_type(m_data),
+		m_coord(m_data),
+		m_collection(*this)
+	{}
+	virtual ~JSONGeoStruct() = default;
+	virtual bool StartObject(JSONDispatcher* dispatcher) override
+	{
+		dispatcher->push(this);
+		DoStartObject();
+		return true;
+	}
+	void DoStartObject()
+	{
+		m_data.clear();
+		initialize();
+		m_data_kind = 0;
+	}
+	virtual bool Key(const char* s, int length, bool copy, JSONDispatcher* dispatcher) override
+	{
+		if (std::strncmp(s, "type", length) == 0)
+			dispatcher->m_value = &m_type;
+		else if (std::strncmp(s, "coordinates", length) == 0)
+		{
+			if (m_type.m_index == 1) // top level
+			{
+				if (m_data_kind != 0)
+					return false;
+				m_data_kind = 1;
+			}
+			dispatcher->m_value = &m_coord;
+		}
+		else if (m_data_kind == 0 && std::strncmp(s, "geometries", length) == 0)
+		{
+			m_data_kind = 2;
+			m_data.append(4, '\0');
+			dispatcher->m_value = &m_collection;
+		}
+		else
+			return false;
+		return true;
+	}
+	virtual bool EndObject(JSONDispatcher* dispatcher) override
+	{
+		dispatcher->pop();
+		return DoEndObject();
+	}
+	bool DoEndObject()
+	{
+		int res = finalize();
+		if (res < 0)
+			return false;
+		if (res > 0)
+			m_adapter->set_value(m_cell);
+		return true;
+	}
+	void initialize()
+	{
+		m_data.push_back(JSONGeoCoord::endianness);
+		m_type.m_index = m_data.size();
+		m_data.append(4, '\0');
+		m_coord.initialize();
+	}
+	int finalize()
+	{
+		size_t i_start = m_type.m_index;
+		uint32_t type = *(uint32_t*)&m_data[i_start];
+		if (type == 0)
+			return m_data.size() == 5 ? 0 : -1;
+		if (type == 7) // collection
+			return (i_start == 1 && m_data_kind == 2) ? 1 : -1;
+		if (i_start == 1 && m_data_kind != 1)
+			return -1;
+		static const int levels[] = { 1, 2, 3, 2, 3, 4 };
+		if (m_coord.m_level != levels[type-1])
+			return -1;
+		if (type >= 4 && type <= 6) // Multi... type
+		{
+			type -= 3;
+			size_t old_size = m_data.size();
+			size_t cnt = *(uint32_t*)&m_data[i_start+4]; // count of base elements, each needs to be prefixed with 5 bytes
+			m_data.resize(old_size + cnt * 5);
+			m_insert_pos.clear();
+			m_insert_pos.reserve(cnt);
+			char* s = &m_data[i_start + 8];
+			m_insert_pos.push_back(s);
+			switch (type)
+			{
+			case 1:
+				for (size_t i = 1; i < cnt; ++i)
+					m_insert_pos.push_back(s += 16);
+				break;
+			case 2:
+				for (size_t i = 1; i < cnt; ++i)
+					m_insert_pos.push_back(s += *(uint32_t*)s * 16 + 4);
+				break;
+			case 3:
+				for (size_t i = 1; i < cnt; ++i)
+				{
+					size_t base_cnt = *(uint32_t*)s;
+					s += 4;
+					for (size_t j = 0; j < base_cnt; ++j)
+						s += *(uint32_t*)s * 16 + 4;
+					m_insert_pos.push_back(s);
+				}
+				break;
+			}
+			char* s_end = &m_data[old_size];
+			char* dst = &m_data[m_data.size()];
+			while (cnt-->0)
+			{
+				s = m_insert_pos[cnt];
+				dst = std::move_backward(s, s_end, dst);
+				dst -= 5;
+				*dst = JSONGeoCoord::endianness;
+				*(uint32_t*)(dst+1) = type;
+				s_end = s;
+			}
+		}
+		return 1;
+	}
+
+protected:
+	class JSONGeoType : public JSONHandler
+	{
+	public:
+		JSONGeoType(std::string& data) : m_data(data) {}
+		virtual ~JSONGeoType() = default;
+		virtual bool String(const char* s, int length, bool copy) override
+		{
+			auto it = type_map.find(std::string(s, length));
+			if (it == type_map.end())
+				return false;
+			*(uint32_t*)&m_data[m_index] = it->second;
+			return true;
+		}
+		inline static const std::unordered_map<std::string, uint32_t> type_map {
+			{"Point", 1}, {"LineString", 2}, {"Polygon", 3}, {"MultiPoint", 4},
+			{"MultiLineString", 5}, {"MultiPolygon", 6}, {"GeometryCollection", 7}
+		};
+
+		std::string& m_data;
+		size_t m_index;
+	};
+
+	class JSONGeoCoord : public JSONHandler
+	{
+	public:
+		JSONGeoCoord(std::string& data) : m_data(data) {}
+		virtual ~JSONGeoCoord() = default;
+		virtual bool StartArray(JSONDispatcher* dispatcher) override
+		{
+			if (m_cur_level == 0)
+				dispatcher->push(this);
+			else if (m_cur_level >= 4)
+				return false;
+			else if (m_cnt_pos[m_cur_level-1] == 0)
+			{
+				m_cnt_pos[m_cur_level-1] = m_data.size();
+				m_data.append(4, '\0');
+			}
+			++m_cur_level;
+			m_cnt = 0;
+			return true;
+		}
+		virtual bool EndArray(JSONDispatcher* dispatcher) override
+		{
+			if (m_cur_level >= m_level && m_cnt < 2)
+				return false;
+			--m_cur_level;
+			if (m_cur_level == 0)
+				dispatcher->pop();
+			else
+			{
+				++*(uint32_t*)&m_data[m_cnt_pos[m_cur_level-1]];
+				m_cnt_pos[m_cur_level] = 0;
+			}
+			return true;
+		}
+		virtual bool Null() override { return m_cur_level == 0; }
+		virtual bool Int(int i) override { return Double(i); }
+		virtual bool Uint(unsigned i) override { return Double(i); }
+		virtual bool Int64(int64_t i) override { return Double(i); }
+		virtual bool Uint64(uint64_t i) override { return Double(i); }
+		virtual bool Double(double d) override
+		{
+			if (m_level == 0)
+			{
+				if (m_cur_level == 0)
+					return false;
+				m_level = m_cur_level;
+			}
+			else if (m_cur_level != m_level)
+				return false;
+			if (m_cnt < 2)
+			{
+				++m_cnt;
+				m_data.append((char*)(&d), 8);
+			}
+			return true;
+		}
+		void initialize()
+		{
+			m_cnt = m_level = m_cur_level = m_cnt_pos[0] = m_cnt_pos[1] = m_cnt_pos[2] = 0;
+		}
+
+		static constexpr char endianness = 1;
+		int m_cnt;
+		int m_level;
+		int m_cur_level;
+		size_t m_cnt_pos[4]; // index 3 is a dummy
+		std::string& m_data;
+	};
+
+	class JSONGeoStructCollection : public JSONHandler
+	{
+	public:
+		JSONGeoStructCollection(JSONGeoStruct& geo) : m_item(geo) {}
+		virtual ~JSONGeoStructCollection() = default;
+		virtual bool StartArray(JSONDispatcher* dispatcher) override
+		{
+			dispatcher->push(&m_item);
+			dispatcher->m_value = &m_item;
+			return true;
+		}
+		virtual bool EndArray(JSONDispatcher* dispatcher) override
+		{
+			m_item.m_geo.m_type.m_index = 1;
+			dispatcher->pop();
+			return true;
+		}
+
+	protected:
+		class JSONGeoStructCollectionItem : public JSONHandler
+		{
+		public:
+			JSONGeoStructCollectionItem(JSONGeoStruct& geo) : m_geo(geo) {}
+			virtual ~JSONGeoStructCollectionItem() = default;
+			virtual bool StartObject(JSONDispatcher* dispatcher) override
+			{
+				m_geo.initialize();
+				return true;
+			}
+			virtual bool Key(const char* s, int length, bool copy, JSONDispatcher* dispatcher) override
+			{
+				return m_geo.Key(s, length, copy, dispatcher);
+			}
+			virtual bool EndObject(JSONDispatcher* dispatcher) override
+			{
+				dispatcher->m_value = this;
+				if (m_geo.finalize() <= 0)
+					return false;
+				++*(uint32_t*)&m_geo.m_data[5];
+				return true;
+			}
+
+			JSONGeoStruct& m_geo;
+		};
+
+		JSONGeoStructCollectionItem m_item;
+	};
+
+	Row::ColumnAdapter* m_adapter;
+	Cell m_cell;
+	std::string& m_data;
+	int m_data_kind; // 1 - coordinates, 2 - geometries
+	JSONGeoType m_type;
+	JSONGeoCoord m_coord;
+	JSONGeoStructCollection m_collection;
+	std::vector<char*> m_insert_pos;
+};
+
+class JSONListGeoStruct : public JSONGeoStruct
+{
+public:
+	using JSONGeoStruct::JSONGeoStruct;
+	virtual bool StartObject(JSONDispatcher* dispatcher) override { DoStartObject(); return true; }
+	virtual bool EndObject(JSONDispatcher* dispatcher) override { return DoEndObject(); }
+	void init_list_value(JSONDispatcher* dispatcher)
+	{
+		m_adapter->set_notnull();
+		dispatcher->push(this);
+		dispatcher->m_value = this;
+	}
+};
+
+class JSONVariant : public JSONHandler, public Row::ColumnAdapter
+{
+public:
+	JSONVariant(Row::ColumnAdapter* adapter) :
+		m_adapter(adapter),
+		m_cell(std::in_place_type<VariantCell>),
+		m_var(std::get<VariantCell>(m_cell))
+	{}
+	virtual bool Null() override { m_var.assign<VariantCell::Null>(0); m_adapter->set_value(m_cell); return true; }
+	virtual bool Bool(bool b) override { m_var.assign<VariantCell::Boolean>(b); m_adapter->set_value(m_cell); return true; }
+	virtual bool Int (int i) override { m_var.assign<VariantCell::Integer>(i); m_adapter->set_value(m_cell); return true; }
+	virtual bool Uint(unsigned i) override { m_var.assign<VariantCell::Unsigned>(i); m_adapter->set_value(m_cell); return true; }
+	virtual bool Int64(int64_t i) override { m_var.assign<VariantCell::Integer64>(i); m_adapter->set_value(m_cell); return true; }
+	virtual bool Uint64(uint64_t i) override { m_var.assign<VariantCell::Unsigned64>(i); m_adapter->set_value(m_cell); return true; }
+	virtual bool Double(double d) override { m_var.assign<VariantCell::Float>(d); m_adapter->set_value(m_cell); return true; }
+	virtual bool String(const char* s, int length, bool copy) override
+	{
+		string_to_variant(s, length, m_var);
+		m_adapter->set_value(m_cell);
+		return true;
+	}
+
+	virtual bool StartArray(JSONDispatcher* dispatcher) override { return StartObject(dispatcher); }
+	virtual bool EndArray(JSONDispatcher* dispatcher) override { finalize(dispatcher, VariantCell::List); return true; }
+	virtual bool StartObject(JSONDispatcher* dispatcher) override
+	{
+		if (!m_nested)
+			m_nested.reset(new JSONVariant(this));
+		dispatcher->push(this);
+		dispatcher->m_value = m_nested.get();
+		m_keys.clear();
+		m_values.clear();
+		return true;
+	}
+	virtual bool Key(const char* s, int length, bool copy, JSONDispatcher* dispatcher) override
+	{
+		m_keys.emplace_back(s, length);
+		return true;
+	}
+	virtual bool EndObject(JSONDispatcher* dispatcher) override { finalize(dispatcher, VariantCell::Struct); return true; }
+
+	virtual ColumnAdapter* column_adapter(size_t i_col) { return nullptr; };
+	virtual void append(bool not_null) {};
+	virtual void set_notnull() {};
+	virtual void set_value(Cell& value)
+	{
+		m_values.push_back(std::move(m_nested->m_var));
+	};
+
+	void init_list_value(JSONDispatcher* dispatcher)
+	{
+		m_adapter->set_notnull();
+		dispatcher->push(dispatcher->m_value);
+		dispatcher->m_value = this;
+	}
+	
+private:
+	void finalize(JSONDispatcher* dispatcher, VariantCell::VariantTypeId type)
+	{
+		m_var.type = type;
+		size_t size = (2 + m_keys.size()) * sizeof(unsigned) + m_values.size() * (sizeof(unsigned) + sizeof(uint8_t));
+		size_t data_start = size;
+		for (const std::string& s : m_keys)
+			size += s.size();
+		for (const VariantCell& cell : m_values)
+			size += cell.data.size();
+		std::string& data = m_var.data;
+		data.reserve(size);
+		data.resize(data_start);
+		unsigned* pu = (unsigned*)data.data();
+		*pu++ = (unsigned)m_values.size();
+		*pu++ = (unsigned)data_start;
+		for (const std::string& s : m_keys)
+		{
+			data.append(s);
+			*pu++ = (unsigned)data.size();
+		}
+		for (const VariantCell& cell : m_values)
+		{
+			data.append(cell.data);
+			*pu++ = (unsigned)data.size();
+		}
+		uint8_t* pc = (uint8_t*)pu;
+		for (const VariantCell& cell : m_values)
+			*pc++ = (uint8_t)cell.type;
+		m_adapter->set_value(m_cell);
+		dispatcher->pop();
+		dispatcher->m_value = this;
+	}
+
+	Row::ColumnAdapter* m_adapter;
+	Cell m_cell;
+	VariantCell& m_var;
+	std::unique_ptr<JSONVariant> m_nested;
+	std::vector<std::string> m_keys;
+	std::vector<VariantCell> m_values;
+};
+
+JSONHandler* JSONBase::create(const ColumnDefinition& col, Row::ColumnAdapter* adapter)
+{
+	switch(col.column_type)
+	{
+	case ColumnType::Struct:
+		if (col.is_list)
+			return new JSONListWrapper<JSONListStruct>(col.fields, adapter);
+		else
+			return new JSONStruct(col.fields, adapter);
+	case ColumnType::Geography:
+		if (col.is_list)
+			return new JSONListWrapper<JSONListGeoStruct>(adapter);
+		else
+			return new JSONGeoStruct(adapter);
+	case ColumnType::Variant:
+		if (col.is_list)
+			return new JSONListWrapper<JSONVariant>(adapter);
+		else
+			return new JSONVariant(adapter);
+	default:
+		if (col.is_list)
+			return new JSONListWrapper<JSONList>(col, adapter);
+		else
+			return new JSONValue(col, adapter);
+	}
+}
+*/
+bool ParserImpl::open()
+{
+	const Schema& schema = *get_schema();
+	size_t n_columns = schema.columns.size();
+
+//	json_columns.resize(n_columns);
+//	std::vector<XMLRoot> xml_columns(n_columns);
+//	XMLParseHandler xml_handler;
+
+/*	for (size_t i_col = 0; i_col < n_columns; ++i_col)
+	{
+		const ColumnDefinition& col = schema.columns[i_col];
+		if (col.is_json)
+			json_columns[i_col].reset(JSONBase::create(col, row->column_adapter(i_col)));
+//		else if (col.format == "XML")
+//			xml_columns[i_col].assign(XMLBase::create(col, row->column_adapter(i_col)));
+		else if (col.column_type == ColumnType::Geography && col.is_list)
+			converters[i_col] = ConvertWKTList;
+		else
+			converters[i_col] = col.is_list ? ConvertToList : _converters[static_cast<size_t>(col.column_type)];
+	}*/
+
+	return true;
+}
+
+bool ParserImpl::GetNextRow(Row &row)
+{
+	const Schema& schema = *get_schema();
+	size_t n_columns = schema.columns.size();
+
+	RowRaw raw_row;
+	int64_t row_number = get_next_row_raw(raw_row);
+	if (row_number < 0) {
+		return false;
+	}
+
+	for (size_t i_col = 0; i_col < n_columns; ++i_col)
+	{
+		const ColumnDefinition& col = schema.columns[i_col];
+		auto writer = row[i_col];
+		if (col.index >= 0)
+		{
+			CellRaw& cell = raw_row[col.index];
+			if (col.index >= (int)raw_row.size() || schema.remove_null_strings && cell_null_str(cell))
+			{
+				writer.SetNull();
+				continue;
+			}
+			int res = std::visit(overloaded{
+			[&](const CellRawDate& v) -> int { return writer.WriteExcelDate(v.d); },
+			[&](auto v) -> int { return writer.Write(v); },
+			}, cell);
+			if (res != 0) {
+				writer.SetNull();
+				if (res < 0) {
+					row.WriteError(i_col, ConvertRawToString(cell));
+				}
+			}
+			/*if (col.is_json)
+			{
+				const std::string* sp = std::get_if<std::string>(&cell);
+				if (!sp || !sp->empty() && !js_dispatcher.parse_string(*sp, json_columns[i_col].get())) {
+				//	row->update_error(i_col, { ErrorCode::TypeError, ConvertRawToString(cell) });
+					writer.SetNull();
+				}
+			}
+			else // XML
+			{
+				//if (!xml_handler.convert_cell(cell, &xml_columns[i_col]))
+				//	row->update_error(i_col, { ErrorCode::TypeError, ConvertRawToString(cell) });
+				//writer.SetNull(i_col);
+			}*/
+		}
+		else // if (col.index == COL_ROWNUM)
+		{
+			writer.Write(row_number);
+		}
+	}
+	return true;
+}
+
+bool JSONParser::GetNextRow(Row &row)
+{
+	return false;
+	//JSONDispatcher dispatcher;
+	//JSONFileAdapter adapter(row);
+	//JSONTopListStruct top(*this, row, &adapter);
+	//dispatcher.parse_file(m_reader.get(), &top, m_schema);
+	//return top.m_is_aborted;
+}
+
+bool XMLParser::GetNextRow(Row &row)
+{
+	return false;
+	//XMLRoot root;
+	//XMLTopListStruct* root_list = new XMLTopListStruct(*this, row);
+	//root.assign(root_list);
+	//XMLParseHandler handler(&root);
+	//return do_parse(handler);
+}
+
+int ParserImpl::get_percent_complete()
+{
+	return 0;
+}
+
+size_t ParserImpl::get_sheet_count()
+{
+	return 0;
+}
+
+std::vector<std::string> ParserImpl::get_sheet_names()
+{
+	return std::vector<std::string>();
+}
+
+bool ParserImpl::select_sheet(const std::string& sheet_name)
+{
+	return false;
+}
+
+bool ParserImpl::select_sheet(size_t sheet_number)
+{
+	return false;
+}
+
+size_t ParserImpl::get_file_count()
+{
+	return 0;
+}
+
+std::vector<std::string> ParserImpl::get_file_names()
+{
+	return std::vector<std::string>();
+}
+
+bool ParserImpl::select_file(const std::string& file_name)
+{
+	return false;
+}
+
+bool ParserImpl::select_file(size_t file_number)
+{
+	return false;
+}
+
+namespace {
+
+template<ColumnType column_type>
+class TType
+{
+public:
+	bool create_schema(ColumnDefinition& col) const
+	{
+		if (m_valid)
+			col.column_type = column_type;
+		return m_valid;
+	}
+
+	int infer(const CellRaw& cell) = delete;
+
+	bool m_valid = true;
+};
+
+template<>
+int TType<ColumnType::Boolean>::infer(const CellRaw& cell)
+{
+	if (!m_valid)
+		return 0;
+	return m_valid = std::visit(overloaded{
+	[](const std::string& s) -> bool { return _bool_dict.find(s) != _bool_dict.end(); },
+	[](bool v) -> bool { return true; },
+	[](int64_t v) -> bool { return v == 0 || v == 1; },
+	[](auto v) -> bool { return false; },
+	}, cell);
+}
+
+static const std::regex _re_check_integer(R"(0|-?[1-9]\d*)");
+template<>
+int TType<ColumnType::Integer>::infer(const CellRaw& cell)
+{
+	if (!m_valid)
+		return 0;
+	return m_valid = std::visit(overloaded{
+	[](const std::string& s) -> bool { return std::regex_match(s, _re_check_integer); },
+	[](double v) -> bool { return is_integer(v); },
+	[](auto v) -> bool { return std::is_integral_v<decltype(v)>; },
+	}, cell);
+}
+
+static const std::regex _re_check_decimal(R"([+-]?(0|[1-9]\d*|\d+\.|\d*\.\d+)(?:[eE][+-]?\d+)?)");
+
+class TDecimal
+{
+public:
+	int infer(const CellRaw& cell)
+	{
+		if (!m_valid)
+			return 0;
+		return m_valid = std::visit(overloaded{
+		[this](const std::string& s) -> bool
+		{
+			std::smatch m;
+			if (!std::regex_match(s, m, _re_check_decimal))
+				return false;
+			if (m.length(1) > 18)
+				m_type = ColumnType::Numeric;
+			return true;
+		},
+		[](auto v) -> bool { return std::is_arithmetic_v<decltype(v)>; },
+		}, cell);
+	}
+
+	bool create_schema(ColumnDefinition& col) const
+	{
+		if (m_valid)
+			col.column_type = m_type;
+		return m_valid;
+	}
+
+	bool m_valid = true;
+	ColumnType m_type = ColumnType::Decimal;
+};
+
+static const std::unordered_map<std::string, char> _dt_tokens {
+	{"utc", 'Z'}, {"gmt", 'Z'},
+	{"am", 'p'}, {"pm", 'p'},
+	{"sunday", 'a'}, {"monday", 'a'}, {"tuesday", 'a'}, {"wednesday", 'a'}, {"thursday", 'a'}, {"friday", 'a'}, {"saturday", 'a'},
+	{"sun", 'a'}, {"mon", 'a'}, {"tue", 'a'}, {"wed", 'a'}, {"thu", 'a'}, {"fri", 'a'}, {"sat", 'a'},
+	{"january", 'b'}, {"february", 'b'}, {"march", 'b'}, {"april", 'b'}, {"may", 'b'}, {"june", 'b'}, {"july", 'b'}, {"august", 'b'}, {"september", 'b'}, {"october", 'b'}, {"november", 'b'}, {"december", 'b'},
+	{"jan", 'b'}, {"feb", 'b'}, {"mar", 'b'}, {"apr", 'b'}, {"may", 'b'}, {"jun", 'b'}, {"jul", 'b'}, {"aug", 'b'}, {"sep", 'b'}, {"oct", 'b'}, {"nov", 'b'}, {"dec", 'b'}
+};
+
+// time | number | word | non-word
+static const std::regex _re_dt_components(R"((\d{1,4}\s*:\s*\d\d(?:\s*:\s*\d\d(?:[.,]\d{1,6})?)?(?!\d))|(\d+)|[a-zA-Z]+|[^\da-zA-Z]+)");
+static const std::regex _re_dt_interval(R"((\d{1,4}\s+)?(\d{1,4}\s*:\s*\d\d(?:\s*:\s*\d\d(?:[.,]\d{1,6})?)?))");
+
+// substitute all numbers in time with corresponding format codes
+static void _build_time_format(std::string& fmt_s, const std::ssub_match& m)
+{
+	static const char time_fmt[] = { 'H', 'M', 'S', 'f' };
+	size_t i_fmt = 0;
+	bool in_digits = false;
+	for (auto i = m.first, end = m.second; i < end; ++i) // substitute all numbers in time with corresponding format codes
+	{
+		bool is_digit = std::isdigit(*i);
+		if (!is_digit)
+			fmt_s += *i;
+		else if (!in_digits)
+			fmt_s += {'%', time_fmt[i_fmt++]};
+		in_digits = is_digit;
+	}
+}
+
+class TDateTime
+{
+public:
+	bool infer_dt_format(const std::string& input_string, bool month_first = true)
+	{
+		double t = 0.0;
+		std::string fmt_s; // current format string with "%_" placeholders for d/m/y tokens
+
+		std::smatch m;
+		if (std::regex_match(input_string, m, _re_dt_interval))
+		{
+			_build_time_format(fmt_s, m[2]);
+			if (!m[1].matched && strptime(input_string, fmt_s, t))
+				m_formats.push_back(fmt_s);
+			fmt_s[1] = 'J';
+			if (strptime(input_string, fmt_s, t))
+				m_formats.push_back(fmt_s);
+			m_have_time = true;
+			return !m_formats.empty();
+		}
+
+		char c;
+		std::vector<std::pair<int, int>> dmy_pos_length; // positions of '_' placeholders in fmt_s and lengths of corresponding d/m/y tokens (1- or 2- digits)
+
+		int where_hour = -1; // position of 'H' in fmt_s
+		int where_year = -1; // if found definite year token - how many d/m/y placeholders were found before it
+		bool have_ampm = false, have_month = false;
+		// separate time, numbers, words and delimiters, time is H:MM[:SS[.FFFFFF]]
+		for (std::sregex_iterator m(input_string.begin(), input_string.end(), _re_dt_components); m != std::sregex_iterator(); ++m)
+		{
+			if ((*m)[2].matched) // token is number
+			{
+				int lng = (int)m->length();
+				if ((lng == 4 || lng == 6) && m->position() > 0 && (c = input_string[m->position() - 1], c == '+' || c == '-') && // may be timezone offset -0100
+						!(lng == 4 && std::stoi(m->str()) > 1500)) // though it also may be year. Limit offset to 1500 in the hopes that Samoa or Kiribati won't shift further east.
+				{
+					fmt_s.back() = '%'; // instead of previous '+|-'
+					fmt_s += 'z';
+				}
+				else
+				{
+					if (lng == 8 && "19000101" <= (*m)[0] && (*m)[0] <= "20991231") // YYYYMMDD
+					{
+						if (where_year >= 0)
+							return false;
+						fmt_s += "%Y%m";
+						where_year = (int)dmy_pos_length.size();
+						have_month = true;
+						lng = 2; // let day be handled by regular algorithm
+					}
+					if (lng == 4) // four digits is year
+					{
+						if (where_year >= 0)
+							return false;
+						fmt_s += "%Y";
+						where_year = (int)dmy_pos_length.size();
+					}
+					else if (lng < 3) // found a d/m/y token, split format string here
+					{
+						fmt_s += "%_";
+						dmy_pos_length.emplace_back((int)fmt_s.size() - 1, lng); // length is 1 or 2
+					}
+					else // wrong number of digits
+						return false;
+				}
+			}
+			else if ((*m)[1].matched) // valid time sequence, encode as 't'
+			{
+				if (where_hour >= 0)
+					return false;
+				where_hour = (int)fmt_s.size() + 1; // first token to append is '%H'
+				_build_time_format(fmt_s, (*m)[0]);
+			}
+			else
+			{
+				std::string s = m->str();
+				std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+				auto new_s = _dt_tokens.find(s); // find a format code of a word
+				if (new_s == _dt_tokens.end())
+				{
+					for (auto i = (*m)[0].first, end = (*m)[0].second; i < end; ++i)
+					{
+						if (*i == '%') // escape literal %
+							fmt_s += '%';
+						fmt_s += *i;
+					}
+				}
+				else
+				{
+					if (new_s->second == 'p')
+						have_ampm = true;
+					else if (new_s->second == 'b') // || new_s->second == 'B')
+						have_month = true;
+					fmt_s += {'%', new_s->second};
+				}
+			}
+		}
+
+		if (have_ampm && where_hour >= 0) // use 12-hour format if am/pm found
+			fmt_s[where_hour] = 'I';
+
+		size_t n_dmy = dmy_pos_length.size(), n_tokens;
+		const char* dmys;
+		if (n_dmy > 0) // sequence of applied d/m/y combinations in priority order
+		{
+			if (have_month) // month in fixed position
+				if (where_year < 0)
+					dmys = "dy" "yd", n_tokens = 2;
+				else
+					dmys = "d", n_tokens = 1;
+			else
+				if (where_year < 0)
+					if (month_first)
+						dmys = "mdy" "dmy" "ymd" "ydm" "myd" "dym", n_tokens = 3;
+					else
+						dmys = "dmy" "mdy" "ymd" "ydm" "myd" "dym", n_tokens = 3;
+				else if (!month_first && where_year >= 2) // month_first=False only applies when year is last
+					dmys = "dm" "md", n_tokens = 2;
+				else
+					dmys = "md" "dm", n_tokens = 2;
+			if (n_tokens != n_dmy) // wrong number of d/m/y tokens
+				return false;
+
+			for (const char* dmy = dmys; *dmy; dmy += n_dmy) // try all possible combinations of d/m/y
+			{
+				for (size_t i = 0; i < n_dmy; ++i) // substitute each token
+				{
+					if (dmy[i] == 'y' && dmy_pos_length[i].second == 1) // year can only be 2-digit, skip this combination
+						goto continue_dmy_loop;
+					fmt_s[dmy_pos_length[i].first] = dmy[i]; // put format specifier into its place
+				}
+				if (strptime(input_string, fmt_s, t))
+					m_formats.push_back(fmt_s);
+			continue_dmy_loop:;
+			}
+
+			m_have_date = true;
+			if (where_hour >= 0 && t - int(t) != 0.0)
+				m_have_time = true;
+		}
+		else // only time
+		{
+			if (where_hour < 0) // neither time nor date found
+				return false;
+			if (strptime(input_string, fmt_s, t))
+				m_formats.push_back(fmt_s);
+			m_have_time = true;
+		}
+		return !m_formats.empty();
+	}
+
+	int infer(const CellRaw& cell)
+	{
+		if (!m_valid)
+			return 0;
+		return m_valid = std::visit(overloaded{
+		[this](const std::string& input_string) -> bool
+		{
+			if (m_formats.empty())
+				return infer_dt_format(input_string);
+			for (auto it = m_formats.end(); it > m_formats.begin();)
+			{
+				--it;
+				double t;
+				if (!strptime(input_string, *it, t))
+					it = m_formats.erase(it);
+				else if (t - int(t) != 0.0)
+					m_have_time = true;
+			}
+			return !m_formats.empty();
+		},
+		[this](const CellRawDate& v) -> bool
+		{
+			double value = v.d;
+			if (!m_have_time && value != std::trunc(value))
+				m_have_time = true;
+			if (!m_have_date && value >= 417.0) // up to 10000 hours is duration, not a date
+				m_have_date = true;
+			return true;
+		},
+		[](auto v) -> bool { return false; },
+		}, cell);
+	}
+
+	bool create_schema(ColumnDefinition& col) const
+	{
+		if (m_valid)
+		{
+			if (m_have_date)
+				col.column_type = m_have_time ? ColumnType::Datetime : ColumnType::Date;
+			else
+				col.column_type = ColumnType::Time;
+			if (!m_formats.empty())
+				col.format = std::move(m_formats[0]);
+		}
+		return m_valid;
+	}
+
+	bool m_valid = true;
+	bool m_have_time = false;
+	bool m_have_date = false;
+	std::vector<std::string> m_formats;
+};
+
+class TBytes
+{
+public:
+	int infer(const CellRaw& cell)
+	{
+		if (!m_valid)
+			return 0;
+		return m_valid = std::visit(overloaded{
+		[this](const std::string& s) -> bool
+		{
+			if (s.size() < 4 || s.size() % 2 != 0)
+				return false;
+			bool has_prefix = (s[1] == 'x' || s[1] == 'X') && s[0] == '0';
+			if (has_prefix)
+				m_have_digits = m_have_letters = true;
+			else if (s.size() < 32)
+				return false;
+			for (size_t i = has_prefix * 2; i < s.size(); ++i)
+			{
+				char ch = s[i];
+				if (ch >= '0' && ch <= '9')
+					m_have_digits = true;
+				else if (ch >= 'A' && ch <= 'F' || ch >= 'a' && ch <= 'f')
+					m_have_letters = true;
+				else
+					return false;
+			}
+			return true;
+		},
+		[](auto v) -> bool { return false; },
+		}, cell);
+	}
+
+	bool create_schema(ColumnDefinition& col) const
+	{
+		if (m_valid && m_have_digits && m_have_letters)
+		{
+			col.column_type = ColumnType::Bytes;
+			return true;
+		}
+		return false;
+	}
+
+	bool m_valid = true;
+	bool m_have_digits = false;
+	bool m_have_letters = false;
+};
+
+class TBytesBase64
+{
+public:
+	int infer(const CellRaw& cell)
+	{
+		if (!m_valid)
+			return 0;
+		return m_valid = std::visit(overloaded{
+		[this](const std::string& s) -> bool
+		{
+			if (s.size() < 16 || s.size() % 4 != 0)
+				return false;
+			for (size_t i = 0; i < s.size(); ++i)
+			{
+				char ch = s[i];
+				if (!(
+					ch >= '0' && ch <= '9' ||
+					ch >= 'A' && ch <= 'Z' ||
+					ch >= 'a' && ch <= 'z' ||
+					ch == '+' || ch == '/'))
+					if (ch == '=' && i >= s.size() - 2)
+						m_have_padding = true;
+					else
+						return false;
+			}
+			return true;
+		},
+		[](auto v) -> bool { return false; },
+		}, cell);
+	}
+
+	bool create_schema(ColumnDefinition& col) const
+	{
+		if (m_valid && m_have_padding)
+		{
+			col.column_type = ColumnType::Bytes;
+			col.format = "base64";
+			return true;
+		}
+		return false;
+	}
+
+	bool m_valid = true;
+	bool m_have_padding = false;
+};
+
+class TList
+{
+public:
+	int infer(const CellRaw& cell)
+	{
+		if (!m_valid)
+			return 0;
+		const std::string* sp = std::get_if<std::string>(&cell);
+		if (!sp)
+			return m_valid = false;
+		const std::string& s = *sp;
+
+		size_t pos, last_pos, new_pos, end_pos;
+		if (s.front() == '<' && s.back() == '>')
+		{
+			pos = 1;
+			last_pos = s.size() - 1;
+			while (pos < last_pos && std::isspace(s[pos]))
+				++pos;
+			while (pos < last_pos && std::isspace(s[last_pos - 1]))
+				--last_pos;
+			if (pos == last_pos) // empty list "<   >"
+				return 1;
+		}
+		else
+		{
+			pos = 0;
+			last_pos = s.size();
+		}
+		while (true)
+		{
+			new_pos = end_pos = s.find(',', pos);
+			if (end_pos == std::string::npos)
+				end_pos = last_pos;
+			while (pos < end_pos && std::isspace((unsigned char)s[pos]))
+				++pos;
+			while (pos < end_pos && std::isspace((unsigned char)s[end_pos - 1]))
+				--end_pos;
+			CellRaw value = s.substr(pos, end_pos - pos);
+			if (std::apply([&value](auto&& ... args) { return (args.infer(value) + ...); }, m_types) == 0)
+				return m_valid = false;
+			if (new_pos == std::string::npos)
+				break;
+			pos = new_pos + 1;
+		}
+		return 1;
+	}
+
+	bool create_schema(ColumnDefinition& col)
+	{
+		if (m_valid)
+		{
+			m_valid = std::apply([&col](auto&& ... args) { return (args.create_schema(col) || ...); }, m_types);
+			if (m_valid)
+				col.is_list = true;
+		}
+		return m_valid;
+	}
+
+	bool m_valid = true;
+	std::tuple<
+		TType<ColumnType::Boolean>,
+		TType<ColumnType::Integer>,
+		TDecimal,
+		TBytes,
+		TBytesBase64,
+		TDateTime
+	> m_types;
+};
+
+static const std::regex _re_not_list_item(R"(\.(\W|$))", std::regex::nosubs);
+
+class TStringList
+{
+public:
+	int infer(const CellRaw& cell)
+	{
+		if (!m_valid)
+			return 0;
+		const std::string* sp = std::get_if<std::string>(&cell);
+		if (!sp)
+			return m_valid = false;
+		const std::string& s = *sp;
+		return m_valid =
+			s.front() == '<' && s.back() == '>' ||
+			s.find(',') != std::string::npos && !std::regex_search(s, _re_not_list_item);
+	}
+
+	bool create_schema(ColumnDefinition& col) const
+	{
+		if (m_valid)
+		{
+			col.column_type = ColumnType::String;
+			col.is_list = true;
+		}
+		return m_valid;
+	}
+
+	bool m_valid = true;
+};
+
+template <class T>
+class infer_children
+{
+	typedef boost::unordered_map<std::string, T, std::hash<std::string>> map_type;
+	typedef std::vector<typename map_type::value_type*> list_type;
+public:
+	typedef boost::indirect_iterator<typename list_type::iterator> iterator;
+	typedef boost::indirect_iterator<typename list_type::const_iterator> const_iterator;
+	std::pair<T*, bool> insert(std::string_view key)
+	{
+		auto it = m_map.find(key, std::hash<std::string_view>(), std::equal_to<>());
+		bool is_new = it == m_map.end();
+		if (is_new)
+		{
+			it = m_map.emplace(std::piecewise_construct, std::forward_as_tuple(key), std::forward_as_tuple()).first;
+			m_list.push_back(&(*it));
+		}
+		return {&it->second, is_new};
+	}
+	const T* find(std::string_view key) const
+	{
+		auto it = m_map.find(key, std::hash<std::string_view>(), std::equal_to<>());
+		return it == m_map.end() ? nullptr : &it->second;
+	}
+	bool empty() const noexcept { return m_map.empty(); }
+	auto size() const noexcept { return m_map.size(); }
+	const T& front() const noexcept { return m_list.front()->second; }
+	iterator begin() noexcept { return m_list.begin(); }
+	iterator end() noexcept { return m_list.end(); }
+	const_iterator begin() const noexcept { return m_list.begin(); }
+	const_iterator end() const noexcept { return m_list.end(); }
+
+private:
+	map_type m_map;
+	list_type m_list;
+};
+
+class XMLInferValue
+{
+public:
+	XMLInferValue* new_object(const char* name)
+	{
+		auto [value, res] = m_children.insert(name);
+		if (!res)
+		{
+			if (value->m_saw_tag)
+				value->m_is_list = true;
+			else
+				value->m_saw_tag = true;
+			value->reset_values();
+		}
+		return value;
+	}
+
+	void new_value(std::string&& s)
+	{
+		CellRaw cell = std::move(s);
+		std::apply([&cell](auto&& ... args) { (args.infer(cell), ...); }, m_types);
+		m_has_single_value = true;
+	}
+
+	void reset_values()
+	{
+		for (auto& p : m_children)
+			p.second.m_saw_tag = false;
+	}
+
+	bool create_column_schema(ColumnDefinition& col) const
+	{
+		if (m_children.empty())
+			return false;
+		const XMLInferValue& root = m_children.front();
+		if (root.m_children.empty())
+			return false;
+		root.create_schema(col);
+		return true;
+	}
+
+	bool create_file_schema(std::vector<ColumnDefinition>& fields) const
+	{
+		if (m_children.empty())
+			return false;
+		const XMLInferValue& root = m_children.front();
+		for (const auto& [_, tag] : root.m_children)
+			if (tag.m_is_list && !tag.m_children.empty())
+			{
+				tag.create_schema(fields);
+				return true;
+			}
+		if (!root.m_children.empty() && !root.m_children.front().m_children.empty())
+		{
+			root.m_children.front().create_schema(fields);
+			return true;
+		}
+		return false;
+	}
+
+private:
+	void create_schema(ColumnDefinition& col) const
+	{
+		if (!m_children.empty())
+		{
+			col.column_type = ColumnType::Struct;
+			create_schema(col.fields, (int)col.index);
+		}
+		else if (m_has_single_value)
+			std::apply([&col](auto&& ... args) { return (args.create_schema(col) || ...); }, m_types);
+		col.is_list = m_is_list;
+	}
+
+	void create_schema(std::vector<ColumnDefinition>& fields, int col_index = 0) const
+	{
+		for (const auto& [key, value] : m_children)
+		{
+			fields.push_back({ key, ColumnType::String, col_index, false });
+			value.create_schema(fields.back());
+		}
+		if (m_has_single_value)
+		{
+			fields.push_back({ "#text", ColumnType::String, col_index, false });
+			ColumnDefinition& col = fields.back();
+			std::apply([&col](auto&& ... args) { return (args.create_schema(col) || ...); }, m_types);
+		}
+	}
+
+	std::tuple<
+		TType<ColumnType::Boolean>,
+		TType<ColumnType::Integer>,
+		TDecimal,
+		TBytes,
+		TBytesBase64,
+		TDateTime
+	> m_types;
+	bool m_has_single_value = false;
+	bool m_is_list = false;
+	bool m_saw_tag = true;
+	infer_children<XMLInferValue> m_children;
+};
+
+class XMLInferHandler : public XMLHandler<XMLInferHandler>
+{
+public:
+	XMLInferHandler() : m_current(&m_value) {}
+
+	bool start_tag(const char* name, const char** atts)
+	{
+		m_stack.push_back(m_current);
+		m_current = m_current->new_object(name);
+		if (atts)
+			for (; *atts; atts += 2)
+				m_current->new_object(*atts)->new_value(std::string(atts[1]));
+		return true;
+	}
+
+	void end_tag()
+	{
+		m_current = m_stack.back();
+		m_stack.pop_back();
+	}
+
+	bool new_text()
+	{
+		m_current->new_value(std::move(m_cur_text));
+		m_cur_text.clear();
+		return true;
+	};
+
+	bool parse(const std::string& s)
+	{
+		m_current = &m_value;
+		m_value.reset_values();
+		m_stack.clear();
+		m_cur_text.clear();
+		return parse_string(s);
+	}
+
+	const XMLInferValue& get_value() const { return m_value; }
+
+private:
+	XMLInferValue m_value;
+	XMLInferValue* m_current;
+	std::vector<XMLInferValue*> m_stack;
+};
+
+static const std::regex _re_is_xml(R"(^<(?:\?xml|(\w+)(?:[^]+</\1|/)>$))");
+
+class TXML
+{
+public:
+	int infer(const CellRaw& cell)
+	{
+		if (!m_valid)
+			return 0;
+		const std::string* sp = std::get_if<std::string>(&cell);
+		if (!sp || !std::regex_search(*sp, _re_is_xml) || !m_handler.parse(*sp))
+			return m_valid = false;
+		return true;
+	}
+
+	bool create_schema(ColumnDefinition& col) const
+	{
+		if (m_valid)
+		{
+			if (m_handler.get_value().create_column_schema(col))
+				col.format = "XML";
+			else
+				return false;
+		}
+		return m_valid;
+	}
+
+	bool m_valid = true;
+	XMLInferHandler m_handler;
+};
+
+class JSONInferValue;
+
+class JSONInferObject : public JSONHandler
+{
+public:
+	virtual ~JSONInferObject() = default;
+	virtual bool Key(const char* s, int length, bool copy, JSONDispatcher* dispatcher) override;
+	bool create_schema(ColumnDefinition& col) const;
+	bool create_geometry(ColumnDefinition& col) const;
+	void create_schema(std::vector<ColumnDefinition>& fields, int col_index = 0) const;
+
+	infer_children<JSONInferValue> m_children;
+};
+
+class JSONInferValue : public JSONHandler
+{
+public:
+	virtual ~JSONInferValue() = default;
+	virtual bool Bool(bool b) override { m_value_types |= ValueBool; test_value(b); return true; }
+	virtual bool Int(int i) override { m_value_types |= ValueNumber; test_value((int64_t)i); return true; }
+	virtual bool Uint(unsigned i) override { m_value_types |= ValueNumber; test_value((int64_t)i); return true; }
+	virtual bool Int64(int64_t i) override { m_value_types |= ValueNumber; test_value(i); return true; }
+	virtual bool Uint64(uint64_t i) override { m_value_types |= ValueNumber; test_value(INT64_MAX); return true; }
+	virtual bool Double(double d) override { m_value_types |= ValueNumber; test_value(d); return true; }
+	virtual bool String(const char* s, int length, bool copy) override { m_value_types |= ValueString; test_value(std::string(s, length)); return true; }
+	virtual bool StartObject(JSONDispatcher* dispatcher) override
+	{
+		if (m_level == 0)
+			m_flags |= ValueObject;
+		dispatcher->push(&m_obj);
+		return true;
+	}
+	virtual bool StartArray(JSONDispatcher* dispatcher) override
+	{
+		if (m_level++ == 0)
+		{
+			dispatcher->push(this);
+			dispatcher->m_value = this;
+			m_flags |= ValueArray;
+		}
+		return true;
+	}
+	virtual bool EndArray(JSONDispatcher* dispatcher) override
+	{
+		if (--m_level == 0)
+			dispatcher->pop();
+		return true;
+	}
+
+	template<typename T> void test_value(T&& value)
+	{
+		CellRaw cell = std::move(value);
+		std::apply([&cell](auto&& ... args) { (args.infer(cell), ...); }, m_types);
+		if (m_level == 0)
+			m_flags |= ValueSingle;
+	}
+
+	void create_schema(ColumnDefinition& col) const
+	{
+		if ((m_flags & ValueSingle) && (m_flags & (ValueObject | ValueArray)))
+			col.column_type = ColumnType::Variant;
+		else if ((m_flags & ValueArray) && !m_obj.m_children.empty() && m_value_types > 0)
+		{
+			col.column_type = ColumnType::Variant;
+			col.is_list = true;
+		}
+		else
+		{
+			m_obj.create_schema(col) || m_value_types != 0 &&
+				std::apply([&col](auto&& ... args) { return (args.create_schema(col) || ...); }, m_types);
+			if (m_flags & ValueArray)
+				col.is_list = true;
+		}
+	}
+
+	bool create_top_schema(JSONSchema& schema, size_t level = 0) const
+	{
+		if ((m_flags & ValueArray) && !m_obj.m_children.empty())
+		{
+			m_obj.create_schema(schema.columns);
+			schema.start_path.resize(level);
+			return true;
+		}
+		for (const auto& [key, value] : m_obj.m_children)
+			if (value.create_top_schema(schema, level + 1))
+			{
+				schema.start_path[level] = key;
+				return true;
+			}
+		return false;
+	}
+
+public:
+	std::tuple<
+		TType<ColumnType::Boolean>,
+		TType<ColumnType::Integer>,
+		TDecimal,
+		TBytes,
+		TBytesBase64,
+		TDateTime
+	> m_types;
+	enum ValueTypes { ValueString = 1, ValueNumber = 2, ValueBool = 4, ValueSingle = 8, ValueObject = 16, ValueArray = 32 };
+	unsigned m_value_types = 0;
+	unsigned m_flags = 0;
+	int m_level = 0;
+	JSONInferObject m_obj;
+};
+
+bool JSONInferObject::Key(const char* s, int length, bool copy, JSONDispatcher* dispatcher)
+{
+	JSONInferValue* new_value = m_children.insert(std::string_view(s, length)).first;
+	new_value->m_level = 0;
+	dispatcher->m_value = new_value;
+	return true;
+}
+
+bool JSONInferObject::create_schema(ColumnDefinition& col) const
+{
+	if (m_children.empty())
+		return false;
+	col.column_type = ColumnType::Struct;
+	create_schema(col.fields, (int)col.index);
+	return true;
+}
+
+bool JSONInferObject::create_geometry(ColumnDefinition& col) const
+{
+	if (m_children.size() < 2 || m_children.size() > 3 || !m_children.find("type"))
+		return false;
+	size_t cnt = 0;
+	const JSONInferValue* p = m_children.find("coordinates");
+	if (p)
+		if (!(p->m_flags & JSONInferValue::ValueArray))
+			return false;
+		else
+			++cnt;
+	p = m_children.find("geometries");
+	if (p)
+		if (!(p->m_flags & JSONInferValue::ValueArray))
+			return false;
+		else
+			++cnt;
+	if (m_children.size() - 1 != cnt)
+		return false;
+	col.column_type = ColumnType::Geography;
+	return true;
+}
+
+void JSONInferObject::create_schema(std::vector<ColumnDefinition>& fields, int col_index) const
+{
+	for (const auto& [key, value] : m_children)
+	{
+		fields.push_back({ key, ColumnType::String, col_index, false });
+		ColumnDefinition& col = fields.back();
+		if (key == "geometry" && value.m_obj.create_geometry(col))
+		{
+			if (value.m_flags & JSONInferValue::ValueArray)
+				col.is_list = true;
+		}
+		else
+			value.create_schema(col);
+	}
+}
+
+//#if defined(_MSC_VER) && defined(_WIN64)
+static const std::regex _re_is_json(R"(\{\s*\}$|\[\s*\]$|(\{\s*"([^"\\]|\\.)*"\s*:|\[)\s*(["{[0-9.\-]|true|false|null))", std::regex::nosubs);
+//#else
+//static const std::regex _re_is_json(R"((\[|\{\s*"([^"\\]|\\.)*"\s*:\s*((?=")|[{[0-9.\-]|true|false|null))([,:{}\[\]0-9.\-+Eaeflnr-u \n\r\t]|"([^"\\]|\\.)*")*[}\]]|\{\s*\})", std::regex::nosubs);
+//#endif
+
+static const std::regex _re_is_geojson(R"~("type"\s*:\s*"(Point|MultiPoint|LineString|MultiLineString|Polygon|MultiPolygon|GeometryCollection|Feature|FeatureCollection)"|^\{\s*\}$)~", std::regex::nosubs);
+
+class TJSON
+{
+public:
+	int infer(const CellRaw& cell)
+	{
+		if (!m_valid)
+			return 0;
+		const std::string* sp = std::get_if<std::string>(&cell);
+		if (!sp || !std::regex_search(*sp, _re_is_json, std::regex_constants::match_continuous) ||
+			(m_value.m_level = 0, !m_json.parse_string(*sp, &m_value)))
+			return m_valid = false;
+		if (m_is_geo && !std::regex_search(*sp, _re_is_geojson))
+			m_is_geo = false;
+		return true;
+	}
+
+	bool create_schema(ColumnDefinition& col) const
+	{
+		if (m_valid)
+		{
+			if (m_is_geo)
+				col.format = "GeoJSON";
+			else
+			{
+				m_value.create_schema(col);
+				if (col.column_type == ColumnType::Struct)
+					col.format = "JSON";
+				col.is_json = true;
+			}
+		}
+		return m_valid;
+	}
+
+	bool m_valid = true;
+	bool m_is_geo = true;
+	JSONDispatcher m_json;
+	JSONInferValue m_value;
+};
+
+static const std::regex _re_is_wkt(R"(<?\s*(POINT|LINESTRING|CIRCULARSTRING|COMPOUNDCURVE|CURVEPOLYGON|POLYGON|TRIANGLE|MULTIPOINT|MULTICURVE|MULTILINESTRING|MULTISURFACE|MULTIPOLYGON|POLYHEDRALSURFACE|TIN|GEOMETRYCOLLECTION)(\s+(Z|M|ZM))?\s*(\(|EMPTY)[\sa-zA-Z0-9()+\-.,>]*)", std::regex::nosubs | std::regex::icase);
+
+class TWKT
+{
+public:
+	int infer(const CellRaw& cell)
+	{
+		if (!m_valid)
+			return 0;
+		const std::string* sp = std::get_if<std::string>(&cell);
+		if (!sp)
+			return m_valid = false;
+		m_valid = std::regex_match(*sp, _re_is_wkt);
+		if (!m_valid || m_is_list)
+			return m_valid;
+		if (sp->front() == '<')
+			m_is_list = true;
+		else
+		{
+			int level = 0;
+			for (char c : *sp)
+				if (c == '(')
+				{
+					if (level < 0)
+					{
+						m_is_list = true;
+						break;
+					}
+					++level;
+				}
+				else if (c == ')' && --level == 0)
+					level = -1;
+		}
+		return true;
+	}
+
+	bool create_schema(ColumnDefinition& col) const
+	{
+		if (m_valid)
+		{
+			col.column_type = ColumnType::Geography;
+			col.format = "WKT";
+			col.is_list = m_is_list;
+		}
+		return m_valid;
+	}
+
+	bool m_valid = true;
+	bool m_is_list = false;
+};
+
+}
+
+class Column
+{
+public:
+	bool infer(const CellRaw& cell)
+	{
+		if (!cell_empty(cell))
+		{
+			empty = false;
+			return std::apply([&cell](auto&& ... args) { return (args.infer(cell) + ...); }, m_types) > 0;
+		}
+		return true;
+	}
+	void create_schema(ColumnDefinition& col)
+	{
+		if (!empty) {
+			std::apply([&col](auto&& ... args) { (args.create_schema(col) || ...); }, m_types);
+			col.bytes_per_value = bytes_per_value;
+		}
+	}
+	bool is_typed() const
+	{
+		return std::apply([](auto&& ... args) { return (args.m_valid || ...); }, m_types);
+	}
+	std::string name;
+	bool empty = true;
+	double bytes_per_value;
+private:
+	std::tuple<
+		TType<ColumnType::Boolean>,
+		TType<ColumnType::Integer>,
+		TDecimal,
+		TBytes,
+		TBytesBase64,
+		TDateTime,
+		TXML,
+		TJSON,
+		TWKT,
+		TList,
+		TStringList
+	> m_types;
+};
+
+void ParserImpl::build_column_info(std::vector<Column>& columns)
+{
+	Schema& schema = *get_schema();
+	std::unordered_set<std::string> have_columns; // columns we already have
+	std::string prefix, new_name;
+	for (size_t i_col = 0; i_col < columns.size(); ++i_col)
+	{
+		const std::string* col_name = &columns[i_col].name;
+		size_t no_start = 0;
+		if (col_name->empty())
+			prefix = "Field_", no_start = i_col + 1;
+		else if (have_columns.find(*col_name) != have_columns.end())
+			prefix = *col_name + '_', no_start = 2;
+		if (no_start > 0)
+			for (size_t no = no_start; ; ++no)
+			{
+				new_name = prefix + std::to_string(no);
+				if (have_columns.find(new_name) == have_columns.end())
+				{
+					col_name = &new_name;
+					break;
+				}
+			}
+		have_columns.insert(*col_name);
+		schema.columns.push_back({ *col_name, ColumnType::String, (int)i_col, false });
+		columns[i_col].create_schema(schema.columns.back());
+	}
+}
+
+void ParserImpl::infer_table(const std::string* comment)
+{
+	size_t comment_lines_skipped_in_parsing = 0;
+	std::vector<RowRaw> rows(INFER_MAX_ROWS);
+	for (size_t i_row = 0; i_row < rows.size(); ++i_row)
+		if (get_next_row_raw(rows[i_row]) < 0)
+		{
+			rows.resize(i_row);
+			break;
+		}
+	if (rows.empty())
+		return;
+
+	if (get_schema()->remove_null_strings)
+		for (RowRaw& row : rows)
+			for (CellRaw& cell : row)
+				if (cell_null_str(cell))
+					std::get<std::string>(cell).clear();
+
+	// remove trailing columns which are empty across all lines
+	size_t n_columns = 0;
+	for (const RowRaw& row : rows)
+		for (size_t i_col = row.size(); i_col > 0; --i_col)
+			if (!cell_empty(row[i_col - 1]))
+			{
+				if (i_col > n_columns)
+					n_columns = i_col;
+				break;
+			}
+	std::unordered_map<size_t, size_t> cnt_columns;
+	for (RowRaw& row : rows)
+	{
+		if (row.size() > n_columns)
+			row.resize(n_columns);
+		++cnt_columns[row.size()];
+	}
+	// most common number of columns
+	n_columns = std::max_element(cnt_columns.begin(), cnt_columns.end(),
+		[](auto p1, auto p2) { return p1.second < p2.second || (p1.second == p2.second && p1.first < p2.first); }
+		)->first;
+	if (n_columns == 0)
+		return;
+
+	std::vector<Column> columns(n_columns);
+
+	size_t header_row = 0, data_row;
+	bool found_header;
+	if (rows.size() == 1)
+	{
+		data_row = 1;
+		found_header = true;
+	}
+	else
+	{
+		int header_score = 0;
+		for (size_t i_row = 0; i_row < rows.size(); ++i_row)
+		{
+			const RowRaw& row = rows[i_row];
+			int sep_value = row.size() == n_columns;
+			int nonblanks = std::none_of(row.begin(), row.end(), cell_empty);
+			int row_offset = INFER_MAX_ROWS - (int)i_row;
+			int num_uniques = (int)std::unordered_set<CellRaw>(row.begin(), row.end()).size();
+			int num_strings = (int)std::count_if(row.begin(), row.end(),
+				[](const CellRaw& cell)
+				{
+					const std::string* sp = std::get_if<std::string>(&cell);
+					return sp && !sp->empty() && std::isalpha((unsigned char)(*sp)[0]);
+				});
+			int score = sep_value * nonblanks + (row_offset + (num_strings * 2) + (num_uniques * 2));
+			if (score > header_score)
+				header_score = score, header_row = i_row;
+		}
+		RowRaw& header = rows[header_row];
+		header.resize(n_columns);
+		if (comment != nullptr)
+		{
+			std::string* sp = std::get_if<std::string>(&header[0]);
+			if (sp && startswith(*comment)(*sp)) // found a comment
+				sp->erase(0, comment->size()); // strip comment_char
+		}
+
+		if (header_row > 0)
+			rows[0] = std::move(header);
+		size_t iw = 1;
+		data_row = 0;
+		for (size_t i_row = header_row + 1; i_row < rows.size(); ++i_row)
+		{
+			RowRaw& row = rows[i_row];
+			if (!std::all_of(row.begin(), row.end(), cell_empty)) // exclude empty lines
+			{
+				if (comment != nullptr)
+				{
+					const std::string* sp = std::get_if<std::string>(&row[0]);
+					if (sp && startswith(*comment)(*sp)) // found a comment)
+					{
+						++comment_lines_skipped_in_parsing;
+						continue;
+					}
+				}
+				if (row.size() == n_columns)
+				{
+					if (data_row == 0)
+						data_row = i_row;
+					if (i_row != iw)
+						rows[iw] = std::move(row);
+					++iw;
+				}
+			}
+		}
+		rows.resize(iw);
+		if (data_row == 0)
+			data_row = header_row + 1;
+
+		for (size_t i_col = 0; i_col < n_columns; ++i_col)
+			for (size_t i_row = 1; i_row < rows.size(); ++i_row) // ignore potential header for now
+				if (!columns[i_col].infer(rows[i_row][i_col])) // no consistent type
+					break;
+
+		found_header = false;
+		std::vector<Column> columns_header = columns;
+		for (size_t i_col = 0; i_col < n_columns; ++i_col) // check if types of first row inconsistent with the rest
+		{
+			if (!columns[i_col].is_typed())
+				continue;
+			const CellRaw& v = rows[0][i_col];
+			if (cell_empty(v))
+				continue;
+			// include header into type detection
+			if (!columns_header[i_col].infer(v) && !columns[i_col].empty) // do not detect header for empty columns
+			{
+				found_header = true;
+				break;
+			}
+		}
+
+		if (!found_header && std::all_of(columns_header.begin(), columns_header.end(), [](const Column& col) { return col.empty || !col.is_typed(); }))
+			found_header = true; // assume first row is header
+		if (!found_header)
+			columns = std::move(columns_header); // no header, include refined types from first row
+
+		for (size_t i_row = 1; i_row < rows.size(); ++i_row)
+			for (size_t i_col = 0; i_col < n_columns; ++i_col)
+				if(const std::string* sp = std::get_if<std::string>(&rows[i_row][i_col]))
+					columns[i_col].bytes_per_value += sp->size();
+		for (size_t i_col = 0; i_col < n_columns; ++i_col)
+			columns[i_col].bytes_per_value /= rows.size()-1;
+	}
+
+	if (found_header)
+		for (size_t i = 0; i < columns.size(); ++i)
+			columns[i].name = ConvertRawToString(rows[0][i]);
+
+	build_column_info(columns);
+	if (CSVSchema* schema = dynamic_cast<CSVSchema*>(get_schema()))
+	{
+		schema->header_row = found_header ? header_row : -1;
+		schema->first_data_row = found_header ? data_row : header_row;
+		schema->comment_lines_skipped_in_parsing = comment_lines_skipped_in_parsing;
+	}
+	else if (XLSSchema* schema = dynamic_cast<XLSSchema*>(get_schema()))
+	{
+		schema->header_row = found_header ? header_row : -1;
+		schema->first_data_row = found_header ? data_row : header_row;
+		schema->comment_lines_skipped_in_parsing = comment_lines_skipped_in_parsing;
+	}
+}
+
+bool JSONParser::do_infer_schema()
+{
+	const size_t SAMPLE_SIZE = 1024 * 1024 * 5;
+
+	m_schema.columns.clear();
+	if (!open())
+		return false;
+	std::string sample(SAMPLE_SIZE, '\0');
+	sample.resize(m_reader->read(&sample[0], SAMPLE_SIZE));
+	close();
+
+	JSONDispatcher json;
+	JSONInferValue value;
+	json.parse_string(sample, &value);
+	return value.create_top_schema(m_schema);
+}
+
+bool XMLParser::do_infer_schema()
+{
+	const size_t SAMPLE_SIZE = 1024 * 1024 * 5;
+
+	m_schema.columns.clear();
+	if (!open())
+		return false;
+	std::string sample(SAMPLE_SIZE, '\0');
+	sample.resize(m_reader->read(&sample[0], SAMPLE_SIZE));
+	close();
+
+	XMLInferHandler handler;
+	handler.parse(sample);
+	return handler.get_value().create_file_schema(get_schema()->columns);
+}
+
+bool ParserImpl::infer_schema()
+{
+	Schema& schema = *get_schema();
+	if (!do_infer_schema())
+	{
+		schema.status = STATUS_INVALID_FILE;
+		return false;
+	}
+	schema.status = STATUS_OK;
+	schema.columns.push_back({ "__rownum__", ColumnType::Integer, COL_ROWNUM, false });
+
+	struct BuildColIndices
+	{
+		int dest_index;
+		void traverse(ColumnDefinition& parent)
+		{
+			for (ColumnDefinition& col : parent.fields)
+			{
+				col.dest_index = dest_index++;
+				if (col.column_type == ColumnType::Struct)
+					traverse(col);
+			}
+		}
+	} col_indices {(int)schema.columns.size()};
+
+	for (size_t i_col = 0; i_col < schema.columns.size(); ++i_col)
+	{
+		ColumnDefinition& col = schema.columns[i_col];
+		if (col.column_type == ColumnType::Struct)
+		{
+			col.dest_index = i_col;
+			col_indices.traverse(col);
+		}
+	}
+	return true;
+}
+
+}

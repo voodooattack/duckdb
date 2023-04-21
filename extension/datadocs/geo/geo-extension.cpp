@@ -1,7 +1,7 @@
 #define DUCKDB_EXTENSION_MAIN
 
-#include "datadocs-extension.hpp"
-#include "datadocs.hpp"
+#include "../include/datadocs-extension.hpp"
+#include "../include/datadocs.hpp"
 
 #include "accessor-functions.hpp"
 #include "constructor-functions.hpp"
@@ -69,7 +69,7 @@ void DataDocsExtension::LoadGeo(Connection &con) {
 	}
 
 	auto cluster_db_scan = GetClusterDBScanAggregateFunction(geo_type);
-	CreateAggregateFunctionInfo cluster_db_scan_func_info(move(cluster_db_scan));
+	CreateAggregateFunctionInfo cluster_db_scan_func_info(std::move(cluster_db_scan));
 	catalog.CreateFunction(*con.context, &cluster_db_scan_func_info);
 }
 

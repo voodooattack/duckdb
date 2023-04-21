@@ -29,6 +29,7 @@
 #include "liblwgeom/lwgeodetic.hpp"
 #include "liblwgeom/lwinline.hpp"
 
+#include <cassert>
 #include <math.h>
 
 namespace duckdb {
