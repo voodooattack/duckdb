@@ -19,7 +19,7 @@
 #include <boost/iterator/indirect_iterator.hpp>
 #include <boost/unordered_map.hpp>
 
-#include <vector_converter.hpp>
+#include "column.hpp"
 
 #include "xls/xlscommon.h"
 
@@ -39,16 +39,16 @@ using namespace std::string_literals;
 
 namespace std
 {
-	template<> struct hash<Ingest::CellRawDate>
+	template<> struct hash<duckdb::CellRawDate>
 	{
-		size_t operator() (const Ingest::CellRawDate& v) const noexcept
+		size_t operator() (const duckdb::CellRawDate& v) const noexcept
 		{
 			return std::hash<double>()(v.d);
 		}
 	};
 }
 
-namespace Ingest {
+namespace duckdb {
 
 const ErrorType ErrorType::NoErrorValue = {};
 	
@@ -201,7 +201,7 @@ ParserImpl* ParserImpl::get_parser_from_reader(std::shared_ptr<BaseReader> reade
 
 void ParserImpl::close() {}
 
-static int ConvertToString(CellRaw& src, Cell& dst, const ColumnDefinition& format)
+static int ConvertToString(CellRaw& src, Cell& dst, const IngestColumnDefinition& format)
 {
 	std::visit(overloaded{
 	[&](std::string& s) { dst = std::move(s); },
@@ -252,7 +252,7 @@ static int ConvertToString(CellRaw& src, Cell& dst, const ColumnDefinition& form
 static std::string ConvertRawToString(CellRaw& src)
 {
 	Cell tmp;
-	ConvertToString(src, tmp, ColumnDefinition());
+	ConvertToString(src, tmp, IngestColumnDefinition());
 	return std::move(std::get<std::string>(tmp));
 }
 
@@ -263,7 +263,7 @@ static const std::unordered_map<std::string, bool> _bool_dict {
 	{"y", true}, {"Y", true}, {"yes", true}, {"Yes", true}, {"YES", true}
 };
 
-static int ConvertToBool(CellRaw& src, Cell& dst, const ColumnDefinition& format)
+static int ConvertToBool(CellRaw& src, Cell& dst, const IngestColumnDefinition& format)
 {
 	return std::visit(overloaded{
 	[&](const std::string& s) -> int
@@ -293,7 +293,7 @@ static int ConvertToBool(CellRaw& src, Cell& dst, const ColumnDefinition& format
 	}, src);
 }
 
-static int ConvertToInteger(CellRaw& src, Cell& dst, const ColumnDefinition& format)
+static int ConvertToInteger(CellRaw& src, Cell& dst, const IngestColumnDefinition& format)
 {
 	return std::visit(overloaded{
 	[&](const std::string& s) -> int
@@ -353,7 +353,7 @@ static int ConvertToInteger(CellRaw& src, Cell& dst, const ColumnDefinition& for
 	}, src);
 }
 
-static int ConvertToDouble(CellRaw& src, Cell& dst, const ColumnDefinition& format)
+static int ConvertToDouble(CellRaw& src, Cell& dst, const IngestColumnDefinition& format)
 {
 	return std::visit(overloaded{
 	[&](const std::string& s) -> int
@@ -384,7 +384,7 @@ static int ConvertToDouble(CellRaw& src, Cell& dst, const ColumnDefinition& form
 	}, src);
 }
 
-static int ConvertToDate(CellRaw& src, Cell& dst, const ColumnDefinition& format)
+static int ConvertToDate(CellRaw& src, Cell& dst, const IngestColumnDefinition& format)
 {
 	return std::visit(overloaded{
 	[&](const std::string& s) -> int
@@ -407,7 +407,7 @@ static int ConvertToDate(CellRaw& src, Cell& dst, const ColumnDefinition& format
 	}, src);
 }
 
-static int ConvertToTime(CellRaw& src, Cell& dst, const ColumnDefinition& format)
+static int ConvertToTime(CellRaw& src, Cell& dst, const IngestColumnDefinition& format)
 {
 	return std::visit(overloaded{
 	[&](const std::string& s) -> int
@@ -429,7 +429,7 @@ static int ConvertToTime(CellRaw& src, Cell& dst, const ColumnDefinition& format
 	}, src);
 }
 
-static int ConvertToDateTime(CellRaw& src, Cell& dst, const ColumnDefinition& format)
+static int ConvertToDateTime(CellRaw& src, Cell& dst, const IngestColumnDefinition& format)
 {
 	return std::visit(overloaded{
 	[&](const std::string& s) -> int
@@ -463,7 +463,7 @@ static const uint8_t _base64tbl[256] = {
 	41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51                      // P-Z
 };
 
-static int ConvertToBytes(CellRaw& src, Cell& dst, const ColumnDefinition& format)
+static int ConvertToBytes(CellRaw& src, Cell& dst, const IngestColumnDefinition& format)
 {
 	return std::visit(overloaded{
 	[&](const std::string& s) -> int
@@ -515,7 +515,7 @@ static int ConvertToBytes(CellRaw& src, Cell& dst, const ColumnDefinition& forma
 	}, src);
 }
 
-static int ConvertToNumeric(CellRaw& src, Cell& dst, const ColumnDefinition& format)
+static int ConvertToNumeric(CellRaw& src, Cell& dst, const IngestColumnDefinition& format)
 {
 	return std::visit(overloaded{
 	[&](const std::string& s) -> int
@@ -538,7 +538,7 @@ static int ConvertToNumeric(CellRaw& src, Cell& dst, const ColumnDefinition& for
 	}, src);
 }
 
-static int ConvertWKT(CellRaw& src, Cell& dst, const ColumnDefinition& format)
+static int ConvertWKT(CellRaw& src, Cell& dst, const IngestColumnDefinition& format)
 {
 	const std::string* sp = std::get_if<std::string>(&src);
 	if (!sp)
@@ -551,7 +551,7 @@ static int ConvertWKT(CellRaw& src, Cell& dst, const ColumnDefinition& format)
 	return wkt_to_bytes(begin, end, res) && begin == end ? 1 : -1;
 }
 
-static int ConvertWKTList(CellRaw& src, Cell& dst, const ColumnDefinition& format)
+static int ConvertWKTList(CellRaw& src, Cell& dst, const IngestColumnDefinition& format)
 {
 	const std::string* sp = std::get_if<std::string>(&src);
 	if (!sp)
@@ -582,7 +582,7 @@ static int ConvertWKTList(CellRaw& src, Cell& dst, const ColumnDefinition& forma
 
 static ConvertFunc _converters[] = { ConvertToString, ConvertToBool, ConvertToInteger, ConvertToDouble, ConvertToDate, ConvertToTime, ConvertToDateTime, ConvertToBytes, ConvertToNumeric, ConvertWKT };
 
-static int ConvertToList(CellRaw& src, Cell& dst, const ColumnDefinition& format)
+static int ConvertToList(CellRaw& src, Cell& dst, const IngestColumnDefinition& format)
 {
 	const std::string* sp = std::get_if<std::string>(&src);
 	if (!sp)
@@ -633,7 +633,8 @@ static int ConvertToList(CellRaw& src, Cell& dst, const ColumnDefinition& format
 	return 1;
 }
 
-/*class JSONFileAdapter : public Row::ColumnAdapter
+/*
+class JSONFileAdapter : public Row::ColumnAdapter
 {
 public:
 	JSONFileAdapter(Row* row) : m_row(row) {}
@@ -649,7 +650,7 @@ private:
 class XMLBase
 {
 public:
-	static XMLBase* create(const ColumnDefinition& col, Row::ColumnAdapter* adapter);
+	static XMLBase* create(const IngestColumnDefinition& col, Row::ColumnAdapter* adapter);
 	virtual ~XMLBase() = default;
 	virtual XMLBase* new_tag(const char* name, const char** atts) { return nullptr; }
 	virtual void first_tag() {}
@@ -661,7 +662,7 @@ public:
 class XMLValueBase : public XMLBase
 {
 public:
-	XMLValueBase(const ColumnDefinition& col, Row::ColumnAdapter* adapter) :
+	XMLValueBase(const IngestColumnDefinition& col, Row::ColumnAdapter* adapter) :
 		m_adapter(adapter),
 		m_col(col),
 		m_converter(_converters[static_cast<size_t>(col.column_type)])
@@ -669,7 +670,7 @@ public:
 	virtual ~XMLValueBase() = default;
 protected:
 	Row::ColumnAdapter* m_adapter;
-	const ColumnDefinition& m_col;
+	const IngestColumnDefinition& m_col;
 	ConvertFunc m_converter;
 	Cell m_cell;
 	CellRaw m_raw_cell;
@@ -709,7 +710,7 @@ public:
 class XMLStruct : public XMLBase
 {
 public:
-	XMLStruct(const std::vector<ColumnDefinition>& fields, Row::ColumnAdapter* adapter) :
+	XMLStruct(const std::vector<IngestColumnDefinition>& fields, Row::ColumnAdapter* adapter) :
 		m_adapter(adapter)
 	{
 		for (size_t i_col = 0; i_col < fields.size(); ++i_col)
@@ -798,7 +799,7 @@ public:
 		size_t n_columns = m_columns.size();
 		for (size_t i_col = 0; i_col < n_columns; ++i_col)
 		{
-			const ColumnDefinition& col = m_columns[i_col];
+			const IngestColumnDefinition& col = m_columns[i_col];
 			if (col.index >= 0)
 				m_row->write_null(i_col);
 			else // if (col.index == COL_ROWNUM)
@@ -820,7 +821,7 @@ public:
 
 protected:
 	XMLParser& m_parser;
-	const std::vector<ColumnDefinition>& m_columns;
+	const std::vector<IngestColumnDefinition>& m_columns;
 	Row* m_row;
 	JSONFileAdapter m_adapter;
 	XMLStruct m_struct;
@@ -842,7 +843,7 @@ protected:
 	std::unique_ptr<XMLBase> m_root;
 };
 
-XMLBase* XMLBase::create(const ColumnDefinition& col, Row::ColumnAdapter* adapter)
+XMLBase* XMLBase::create(const IngestColumnDefinition& col, Row::ColumnAdapter* adapter)
 {
 	if (col.column_type == ColumnType::Struct)
 		if (col.is_list)
@@ -900,658 +901,13 @@ private:
 	XMLBase* m_top;
 	std::vector<XMLBase*> m_stack;
 };
-
-template<class Value>
-class JSONListWrapper : public JSONHandler
-{
-public:
-	template<typename... Args>
-	JSONListWrapper(Args&&... args) : m_value(std::forward<Args>(args)...) {}
-	virtual bool StartArray(JSONDispatcher* dispatcher) override { m_value.init_list_value(dispatcher); return true; }
-private:
-	Value m_value;
-};
-
-class JSONBase : public JSONHandler
-{
-public:
-	static JSONHandler* create(const ColumnDefinition& col, Row::ColumnAdapter* adapter);
-	virtual bool Bool(bool b) override { return new_value(CellRaw(b)); }
-	virtual bool Int(int i) override { return new_value(CellRaw((int64_t)i)); }
-	virtual bool Uint(unsigned i) override { return new_value(CellRaw((int64_t)i)); }
-	virtual bool Int64(int64_t i) override { return new_value(CellRaw(i)); }
-	virtual bool Uint64(uint64_t i) override { return new_value(CellRaw((int64_t(i < INT64_MAX ? i : INT64_MAX)))); }
-	virtual bool Double(double d) override { return new_value(CellRaw(d)); }
-	virtual bool String(const char* s, int length, bool copy) override { return new_value(CellRaw(std::string(s, length))); }
-	virtual bool new_value(CellRaw&& cell) { return false; }
-};
-
-class JSONValueBase : public JSONBase
-{
-public:
-	JSONValueBase(const ColumnDefinition& col, Row::ColumnAdapter* adapter) :
-		m_adapter(adapter),
-		m_col(col),
-		m_converter(_converters[static_cast<size_t>(col.column_type)])
-	{}
-	virtual ~JSONValueBase() = default;
-protected:
-	Row::ColumnAdapter* m_adapter;
-	const ColumnDefinition& m_col;
-	ConvertFunc m_converter;
-	Cell m_value;
-};
-
-class JSONValue : public JSONValueBase
-{
-public:
-	using JSONValueBase::JSONValueBase;
-	virtual bool new_value(CellRaw&& cell) override
-	{
-		int res = m_converter(cell, m_value, m_col);
-		if (res > 0)
-			m_adapter->set_value(m_value);
-		return res >= 0;
-	}
-};
-
-class JSONList : public JSONValueBase
-{
-public:
-	using JSONValueBase::JSONValueBase;
-	virtual bool Null() override { return false; }
-
-	virtual bool StartArray(JSONDispatcher* dispatcher) override
-	{
-		if (m_found_value && m_level >= m_dimensions.size())
-			return false;
-		if (m_dimensions.size() > m_level)
-			m_dimensions[m_level].second = 0;
-		else
-			m_dimensions.push_back({ 0, -1 });
-		if (m_level > 0)
-			if (auto& this_level = m_dimensions[m_level-1]; this_level.second == -1)
-				++this_level.first;
-			else
-				++this_level.second;
-		++m_level;
-		return true;
-	}
-
-	virtual bool EndArray(JSONDispatcher* dispatcher) override
-	{
-		if (m_level == 0)
-		{
-			if (!m_dimensions.empty())
-				m_adapter->set_dimensions(m_dimensions);
-			dispatcher->pop();
-			return true;
-		}
-		--m_level;
-		auto& this_level = m_dimensions[m_level];
-		if (this_level.second != -1 && this_level.second != this_level.first)
-			return false;
-		return m_found_value;
-	}
-
-	virtual bool new_value(CellRaw&& cell) override
-	{
-		if (!m_found_value)
-			m_found_value = true;
-		else if (m_level != m_dimensions.size())
-			return false;
-		if (m_level > 0)
-			if (auto& this_level = m_dimensions[m_level-1]; this_level.second == -1)
-				++this_level.first;
-			else
-				++this_level.second;
-
-		int res = m_converter(cell, m_value, m_col);
-		if (res <= 0)
-			return false;
-		m_adapter->set_value(m_value);
-		return true;
-	}
-
-	void init_list_value(JSONDispatcher* dispatcher)
-	{
-		m_level = 0;
-		m_found_value = false;
-		m_dimensions.clear();
-		m_adapter->set_notnull();
-		dispatcher->push(this);
-		dispatcher->m_value = this;
-	}
-
-private:
-	int m_level;
-	bool m_found_value;
-	std::vector<std::pair<int, int>> m_dimensions;
-};
-
-class JSONStruct : public JSONHandler
-{
-public:
-	typedef std::unordered_map<std::string, std::unique_ptr<JSONHandler>> TKeyMap;
-	JSONStruct(const std::vector<ColumnDefinition>& fields, Row::ColumnAdapter* adapter) :
-		m_adapter(adapter)
-	{
-		for (size_t i_col = 0; i_col < fields.size(); ++i_col)
-		{
-			if (fields[i_col].index >= 0)
-				m_map.emplace(
-					fields[i_col].column_name,
-					JSONBase::create(fields[i_col], adapter->column_adapter(i_col))
-				);
-		}
-	}
-	JSONStruct(TKeyMap&& map, Row::ColumnAdapter* adapter) :
-		m_adapter(adapter),
-		m_map(std::move(map))
-	{}
-	virtual ~JSONStruct() = default;
-	virtual bool StartObject(JSONDispatcher* dispatcher) override
-	{
-		m_adapter->set_notnull();
-		dispatcher->push(this);
-		return true;
-	}
-	virtual bool Key(const char* s, int length, bool copy, JSONDispatcher* dispatcher) override
-	{
-		auto it = m_map.find(std::string(s, length));
-		if (it == m_map.end())
-			return false;
-		dispatcher->m_value = it->second.get();
-		return true;
-	}
-
-public:
-	Row::ColumnAdapter* m_adapter;
-	TKeyMap m_map;
-};
-
-class JSONListStruct : public JSONStruct
-{
-public:
-	using JSONStruct::JSONStruct;
-	virtual bool Null() override { m_adapter->append(false); return true; }
-	virtual bool StartObject(JSONDispatcher* dispatcher) override { m_adapter->append(true); return true; }
-	virtual bool EndObject(JSONDispatcher* dispatcher) override { dispatcher->m_value = this; return true; }
-	void init_list_value(JSONDispatcher* dispatcher)
-	{
-		m_adapter->set_notnull();
-		dispatcher->push(this);
-		dispatcher->m_value = this;
-	}
-};
-
-class JSONTopListStruct : public JSONStruct
-{
-public:
-	JSONTopListStruct(JSONParser& parser, Row* row, JSONFileAdapter* adapter) :
-		JSONStruct(parser.get_schema()->columns, adapter),
-		m_parser(parser),
-		m_columns(parser.get_schema()->columns),
-		m_row(row),
-		m_row_number(0),
-		m_is_aborted(false)
-	{}
-	virtual ~JSONTopListStruct() = default;
-	virtual bool StartObject(JSONDispatcher* dispatcher) override
-	{
-		++m_row_number;
-		//if(!m_row->new_row(m_parser.get_percent_complete()))
-		//{
-		//	m_is_aborted = true;
-		//	return false;
-		//}
-		size_t n_columns = m_columns.size();
-		for (size_t i_col = 0; i_col < n_columns; ++i_col)
-		{
-			const ColumnDefinition& col = m_columns[i_col];
-			if (col.index >= 0)
-				m_row->write_null(i_col);
-			else // if (col.index == COL_ROWNUM)
-			{
-				m_value.emplace<int32_t>(m_row_number);
-				m_row->write_value(i_col, m_value);
-			}
-		}
-		return true;
-	}
-	virtual bool EndObject(JSONDispatcher* dispatcher) override { dispatcher->m_value = this; return true; }
-
-protected:
-	JSONParser& m_parser;
-	const std::vector<ColumnDefinition>& m_columns;
-	Row* m_row;
-	int32_t m_row_number;
-	Cell m_value;
-public:
-	bool m_is_aborted;
-};
-
-class JSONGeoStruct : public JSONHandler
-{
-public:
-	JSONGeoStruct(Row::ColumnAdapter* adapter) :
-		m_adapter(adapter),
-		m_cell(std::in_place_type<std::string>),
-		m_data(std::get<std::string>(m_cell)),
-		m_type(m_data),
-		m_coord(m_data),
-		m_collection(*this)
-	{}
-	virtual ~JSONGeoStruct() = default;
-	virtual bool StartObject(JSONDispatcher* dispatcher) override
-	{
-		dispatcher->push(this);
-		DoStartObject();
-		return true;
-	}
-	void DoStartObject()
-	{
-		m_data.clear();
-		initialize();
-		m_data_kind = 0;
-	}
-	virtual bool Key(const char* s, int length, bool copy, JSONDispatcher* dispatcher) override
-	{
-		if (std::strncmp(s, "type", length) == 0)
-			dispatcher->m_value = &m_type;
-		else if (std::strncmp(s, "coordinates", length) == 0)
-		{
-			if (m_type.m_index == 1) // top level
-			{
-				if (m_data_kind != 0)
-					return false;
-				m_data_kind = 1;
-			}
-			dispatcher->m_value = &m_coord;
-		}
-		else if (m_data_kind == 0 && std::strncmp(s, "geometries", length) == 0)
-		{
-			m_data_kind = 2;
-			m_data.append(4, '\0');
-			dispatcher->m_value = &m_collection;
-		}
-		else
-			return false;
-		return true;
-	}
-	virtual bool EndObject(JSONDispatcher* dispatcher) override
-	{
-		dispatcher->pop();
-		return DoEndObject();
-	}
-	bool DoEndObject()
-	{
-		int res = finalize();
-		if (res < 0)
-			return false;
-		if (res > 0)
-			m_adapter->set_value(m_cell);
-		return true;
-	}
-	void initialize()
-	{
-		m_data.push_back(JSONGeoCoord::endianness);
-		m_type.m_index = m_data.size();
-		m_data.append(4, '\0');
-		m_coord.initialize();
-	}
-	int finalize()
-	{
-		size_t i_start = m_type.m_index;
-		uint32_t type = *(uint32_t*)&m_data[i_start];
-		if (type == 0)
-			return m_data.size() == 5 ? 0 : -1;
-		if (type == 7) // collection
-			return (i_start == 1 && m_data_kind == 2) ? 1 : -1;
-		if (i_start == 1 && m_data_kind != 1)
-			return -1;
-		static const int levels[] = { 1, 2, 3, 2, 3, 4 };
-		if (m_coord.m_level != levels[type-1])
-			return -1;
-		if (type >= 4 && type <= 6) // Multi... type
-		{
-			type -= 3;
-			size_t old_size = m_data.size();
-			size_t cnt = *(uint32_t*)&m_data[i_start+4]; // count of base elements, each needs to be prefixed with 5 bytes
-			m_data.resize(old_size + cnt * 5);
-			m_insert_pos.clear();
-			m_insert_pos.reserve(cnt);
-			char* s = &m_data[i_start + 8];
-			m_insert_pos.push_back(s);
-			switch (type)
-			{
-			case 1:
-				for (size_t i = 1; i < cnt; ++i)
-					m_insert_pos.push_back(s += 16);
-				break;
-			case 2:
-				for (size_t i = 1; i < cnt; ++i)
-					m_insert_pos.push_back(s += *(uint32_t*)s * 16 + 4);
-				break;
-			case 3:
-				for (size_t i = 1; i < cnt; ++i)
-				{
-					size_t base_cnt = *(uint32_t*)s;
-					s += 4;
-					for (size_t j = 0; j < base_cnt; ++j)
-						s += *(uint32_t*)s * 16 + 4;
-					m_insert_pos.push_back(s);
-				}
-				break;
-			}
-			char* s_end = &m_data[old_size];
-			char* dst = &m_data[m_data.size()];
-			while (cnt-->0)
-			{
-				s = m_insert_pos[cnt];
-				dst = std::move_backward(s, s_end, dst);
-				dst -= 5;
-				*dst = JSONGeoCoord::endianness;
-				*(uint32_t*)(dst+1) = type;
-				s_end = s;
-			}
-		}
-		return 1;
-	}
-
-protected:
-	class JSONGeoType : public JSONHandler
-	{
-	public:
-		JSONGeoType(std::string& data) : m_data(data) {}
-		virtual ~JSONGeoType() = default;
-		virtual bool String(const char* s, int length, bool copy) override
-		{
-			auto it = type_map.find(std::string(s, length));
-			if (it == type_map.end())
-				return false;
-			*(uint32_t*)&m_data[m_index] = it->second;
-			return true;
-		}
-		inline static const std::unordered_map<std::string, uint32_t> type_map {
-			{"Point", 1}, {"LineString", 2}, {"Polygon", 3}, {"MultiPoint", 4},
-			{"MultiLineString", 5}, {"MultiPolygon", 6}, {"GeometryCollection", 7}
-		};
-
-		std::string& m_data;
-		size_t m_index;
-	};
-
-	class JSONGeoCoord : public JSONHandler
-	{
-	public:
-		JSONGeoCoord(std::string& data) : m_data(data) {}
-		virtual ~JSONGeoCoord() = default;
-		virtual bool StartArray(JSONDispatcher* dispatcher) override
-		{
-			if (m_cur_level == 0)
-				dispatcher->push(this);
-			else if (m_cur_level >= 4)
-				return false;
-			else if (m_cnt_pos[m_cur_level-1] == 0)
-			{
-				m_cnt_pos[m_cur_level-1] = m_data.size();
-				m_data.append(4, '\0');
-			}
-			++m_cur_level;
-			m_cnt = 0;
-			return true;
-		}
-		virtual bool EndArray(JSONDispatcher* dispatcher) override
-		{
-			if (m_cur_level >= m_level && m_cnt < 2)
-				return false;
-			--m_cur_level;
-			if (m_cur_level == 0)
-				dispatcher->pop();
-			else
-			{
-				++*(uint32_t*)&m_data[m_cnt_pos[m_cur_level-1]];
-				m_cnt_pos[m_cur_level] = 0;
-			}
-			return true;
-		}
-		virtual bool Null() override { return m_cur_level == 0; }
-		virtual bool Int(int i) override { return Double(i); }
-		virtual bool Uint(unsigned i) override { return Double(i); }
-		virtual bool Int64(int64_t i) override { return Double(i); }
-		virtual bool Uint64(uint64_t i) override { return Double(i); }
-		virtual bool Double(double d) override
-		{
-			if (m_level == 0)
-			{
-				if (m_cur_level == 0)
-					return false;
-				m_level = m_cur_level;
-			}
-			else if (m_cur_level != m_level)
-				return false;
-			if (m_cnt < 2)
-			{
-				++m_cnt;
-				m_data.append((char*)(&d), 8);
-			}
-			return true;
-		}
-		void initialize()
-		{
-			m_cnt = m_level = m_cur_level = m_cnt_pos[0] = m_cnt_pos[1] = m_cnt_pos[2] = 0;
-		}
-
-		static constexpr char endianness = 1;
-		int m_cnt;
-		int m_level;
-		int m_cur_level;
-		size_t m_cnt_pos[4]; // index 3 is a dummy
-		std::string& m_data;
-	};
-
-	class JSONGeoStructCollection : public JSONHandler
-	{
-	public:
-		JSONGeoStructCollection(JSONGeoStruct& geo) : m_item(geo) {}
-		virtual ~JSONGeoStructCollection() = default;
-		virtual bool StartArray(JSONDispatcher* dispatcher) override
-		{
-			dispatcher->push(&m_item);
-			dispatcher->m_value = &m_item;
-			return true;
-		}
-		virtual bool EndArray(JSONDispatcher* dispatcher) override
-		{
-			m_item.m_geo.m_type.m_index = 1;
-			dispatcher->pop();
-			return true;
-		}
-
-	protected:
-		class JSONGeoStructCollectionItem : public JSONHandler
-		{
-		public:
-			JSONGeoStructCollectionItem(JSONGeoStruct& geo) : m_geo(geo) {}
-			virtual ~JSONGeoStructCollectionItem() = default;
-			virtual bool StartObject(JSONDispatcher* dispatcher) override
-			{
-				m_geo.initialize();
-				return true;
-			}
-			virtual bool Key(const char* s, int length, bool copy, JSONDispatcher* dispatcher) override
-			{
-				return m_geo.Key(s, length, copy, dispatcher);
-			}
-			virtual bool EndObject(JSONDispatcher* dispatcher) override
-			{
-				dispatcher->m_value = this;
-				if (m_geo.finalize() <= 0)
-					return false;
-				++*(uint32_t*)&m_geo.m_data[5];
-				return true;
-			}
-
-			JSONGeoStruct& m_geo;
-		};
-
-		JSONGeoStructCollectionItem m_item;
-	};
-
-	Row::ColumnAdapter* m_adapter;
-	Cell m_cell;
-	std::string& m_data;
-	int m_data_kind; // 1 - coordinates, 2 - geometries
-	JSONGeoType m_type;
-	JSONGeoCoord m_coord;
-	JSONGeoStructCollection m_collection;
-	std::vector<char*> m_insert_pos;
-};
-
-class JSONListGeoStruct : public JSONGeoStruct
-{
-public:
-	using JSONGeoStruct::JSONGeoStruct;
-	virtual bool StartObject(JSONDispatcher* dispatcher) override { DoStartObject(); return true; }
-	virtual bool EndObject(JSONDispatcher* dispatcher) override { return DoEndObject(); }
-	void init_list_value(JSONDispatcher* dispatcher)
-	{
-		m_adapter->set_notnull();
-		dispatcher->push(this);
-		dispatcher->m_value = this;
-	}
-};
-
-class JSONVariant : public JSONHandler, public Row::ColumnAdapter
-{
-public:
-	JSONVariant(Row::ColumnAdapter* adapter) :
-		m_adapter(adapter),
-		m_cell(std::in_place_type<VariantCell>),
-		m_var(std::get<VariantCell>(m_cell))
-	{}
-	virtual bool Null() override { m_var.assign<VariantCell::Null>(0); m_adapter->set_value(m_cell); return true; }
-	virtual bool Bool(bool b) override { m_var.assign<VariantCell::Boolean>(b); m_adapter->set_value(m_cell); return true; }
-	virtual bool Int (int i) override { m_var.assign<VariantCell::Integer>(i); m_adapter->set_value(m_cell); return true; }
-	virtual bool Uint(unsigned i) override { m_var.assign<VariantCell::Unsigned>(i); m_adapter->set_value(m_cell); return true; }
-	virtual bool Int64(int64_t i) override { m_var.assign<VariantCell::Integer64>(i); m_adapter->set_value(m_cell); return true; }
-	virtual bool Uint64(uint64_t i) override { m_var.assign<VariantCell::Unsigned64>(i); m_adapter->set_value(m_cell); return true; }
-	virtual bool Double(double d) override { m_var.assign<VariantCell::Float>(d); m_adapter->set_value(m_cell); return true; }
-	virtual bool String(const char* s, int length, bool copy) override
-	{
-		string_to_variant(s, length, m_var);
-		m_adapter->set_value(m_cell);
-		return true;
-	}
-
-	virtual bool StartArray(JSONDispatcher* dispatcher) override { return StartObject(dispatcher); }
-	virtual bool EndArray(JSONDispatcher* dispatcher) override { finalize(dispatcher, VariantCell::List); return true; }
-	virtual bool StartObject(JSONDispatcher* dispatcher) override
-	{
-		if (!m_nested)
-			m_nested.reset(new JSONVariant(this));
-		dispatcher->push(this);
-		dispatcher->m_value = m_nested.get();
-		m_keys.clear();
-		m_values.clear();
-		return true;
-	}
-	virtual bool Key(const char* s, int length, bool copy, JSONDispatcher* dispatcher) override
-	{
-		m_keys.emplace_back(s, length);
-		return true;
-	}
-	virtual bool EndObject(JSONDispatcher* dispatcher) override { finalize(dispatcher, VariantCell::Struct); return true; }
-
-	virtual ColumnAdapter* column_adapter(size_t i_col) { return nullptr; };
-	virtual void append(bool not_null) {};
-	virtual void set_notnull() {};
-	virtual void set_value(Cell& value)
-	{
-		m_values.push_back(std::move(m_nested->m_var));
-	};
-
-	void init_list_value(JSONDispatcher* dispatcher)
-	{
-		m_adapter->set_notnull();
-		dispatcher->push(dispatcher->m_value);
-		dispatcher->m_value = this;
-	}
-	
-private:
-	void finalize(JSONDispatcher* dispatcher, VariantCell::VariantTypeId type)
-	{
-		m_var.type = type;
-		size_t size = (2 + m_keys.size()) * sizeof(unsigned) + m_values.size() * (sizeof(unsigned) + sizeof(uint8_t));
-		size_t data_start = size;
-		for (const std::string& s : m_keys)
-			size += s.size();
-		for (const VariantCell& cell : m_values)
-			size += cell.data.size();
-		std::string& data = m_var.data;
-		data.reserve(size);
-		data.resize(data_start);
-		unsigned* pu = (unsigned*)data.data();
-		*pu++ = (unsigned)m_values.size();
-		*pu++ = (unsigned)data_start;
-		for (const std::string& s : m_keys)
-		{
-			data.append(s);
-			*pu++ = (unsigned)data.size();
-		}
-		for (const VariantCell& cell : m_values)
-		{
-			data.append(cell.data);
-			*pu++ = (unsigned)data.size();
-		}
-		uint8_t* pc = (uint8_t*)pu;
-		for (const VariantCell& cell : m_values)
-			*pc++ = (uint8_t)cell.type;
-		m_adapter->set_value(m_cell);
-		dispatcher->pop();
-		dispatcher->m_value = this;
-	}
-
-	Row::ColumnAdapter* m_adapter;
-	Cell m_cell;
-	VariantCell& m_var;
-	std::unique_ptr<JSONVariant> m_nested;
-	std::vector<std::string> m_keys;
-	std::vector<VariantCell> m_values;
-};
-
-JSONHandler* JSONBase::create(const ColumnDefinition& col, Row::ColumnAdapter* adapter)
-{
-	switch(col.column_type)
-	{
-	case ColumnType::Struct:
-		if (col.is_list)
-			return new JSONListWrapper<JSONListStruct>(col.fields, adapter);
-		else
-			return new JSONStruct(col.fields, adapter);
-	case ColumnType::Geography:
-		if (col.is_list)
-			return new JSONListWrapper<JSONListGeoStruct>(adapter);
-		else
-			return new JSONGeoStruct(adapter);
-	case ColumnType::Variant:
-		if (col.is_list)
-			return new JSONListWrapper<JSONVariant>(adapter);
-		else
-			return new JSONVariant(adapter);
-	default:
-		if (col.is_list)
-			return new JSONListWrapper<JSONList>(col, adapter);
-		else
-			return new JSONValue(col, adapter);
-	}
-}
 */
+
 bool ParserImpl::open()
 {
 	const Schema& schema = *get_schema();
 	size_t n_columns = schema.columns.size();
+	is_finished = false;
 
 //	json_columns.resize(n_columns);
 //	std::vector<XMLRoot> xml_columns(n_columns);
@@ -1559,7 +915,7 @@ bool ParserImpl::open()
 
 /*	for (size_t i_col = 0; i_col < n_columns; ++i_col)
 	{
-		const ColumnDefinition& col = schema.columns[i_col];
+		const IngestColumnDefinition& col = schema.columns[i_col];
 		if (col.is_json)
 			json_columns[i_col].reset(JSONBase::create(col, row->column_adapter(i_col)));
 //		else if (col.format == "XML")
@@ -1573,73 +929,106 @@ bool ParserImpl::open()
 	return true;
 }
 
-bool ParserImpl::GetNextRow(Row &row)
-{
+IngestColBase* BuildColumn(const IngestColumnDefinition &col, idx_t &cur_row) {
+	switch(col.column_type) {
+	case ColumnType::String: return new IngestColVARCHAR(col.column_name, cur_row);
+	case ColumnType::Boolean: return new IngestColBOOLEAN(col.column_name, cur_row);
+	case ColumnType::Integer: return new IngestColBIGINT(col.column_name, cur_row);
+	case ColumnType::Decimal: return new IngestColDOUBLE(col.column_name, cur_row);
+	case ColumnType::Date: return new IngestColDATE(col.column_name, cur_row, col.format);
+	case ColumnType::Time: return new IngestColTIME(col.column_name, cur_row, col.format);
+	case ColumnType::Datetime: return new IngestColTIMESTAMP(col.column_name, cur_row, col.format);
+	case ColumnType::Bytes:
+		if (col.format == "base64") {
+			return new IngestColBLOBBase64(col.column_name, cur_row);
+		}
+		return new IngestColBLOBHex(col.column_name, cur_row);
+	case ColumnType::Numeric: return new IngestColNUMERIC(col.column_name, cur_row);
+	case ColumnType::Geography: return new IngestColGEO(col.column_name, cur_row);
+	case ColumnType::Variant: return new IngestColVARIANT(col.column_name, cur_row);
+	default:
+		D_ASSERT(false);
+		return new IngestColBase(col.column_name, cur_row);
+	}
+}
+
+void ParserImpl::BuildColumns() {
+	Schema *schema = get_schema();
+	for (const auto &col : schema->columns) {
+		m_columns.push_back(std::unique_ptr<IngestColBase>(BuildColumn(col, cur_row)));
+	}
+}
+
+void ParserImpl::BindSchema(vector<LogicalType> &return_types, vector<string> &names) {
+	for (auto &col : m_columns) {
+		names.push_back(col->GetName());
+		return_types.push_back(col->GetType());
+	}
+}
+
+idx_t ParserImpl::FillChunk(DataChunk &output) {
+	size_t n_columns = m_columns.size();
+	D_ASSERT(output.data.size() == n_columns);
+	for (size_t i = 0; i < n_columns; ++i) {
+		m_columns[i]->SetVector(&output.data[i]);
+	}
+
 	const Schema& schema = *get_schema();
-	size_t n_columns = schema.columns.size();
-
 	RowRaw raw_row;
-	int64_t row_number = get_next_row_raw(raw_row);
-	if (row_number < 0) {
-		return false;
-	}
 
-	for (size_t i_col = 0; i_col < n_columns; ++i_col)
-	{
-		const ColumnDefinition& col = schema.columns[i_col];
-		auto writer = row[i_col];
-		if (col.index >= 0)
-		{
-			CellRaw& cell = raw_row[col.index];
-			if (col.index >= (int)raw_row.size() || schema.remove_null_strings && cell_null_str(cell))
-			{
-				writer.SetNull();
-				continue;
-			}
-			int res = std::visit(overloaded{
-			[&](const CellRawDate& v) -> int { return writer.WriteExcelDate(v.d); },
-			[&](auto v) -> int { return writer.Write(v); },
-			}, cell);
-			if (res != 0) {
-				writer.SetNull();
-				if (res < 0) {
-					row.WriteError(i_col, ConvertRawToString(cell));
-				}
-			}
-			/*if (col.is_json)
-			{
-				const std::string* sp = std::get_if<std::string>(&cell);
-				if (!sp || !sp->empty() && !js_dispatcher.parse_string(*sp, json_columns[i_col].get())) {
-				//	row->update_error(i_col, { ErrorCode::TypeError, ConvertRawToString(cell) });
-					writer.SetNull();
-				}
-			}
-			else // XML
-			{
-				//if (!xml_handler.convert_cell(cell, &xml_columns[i_col]))
-				//	row->update_error(i_col, { ErrorCode::TypeError, ConvertRawToString(cell) });
-				//writer.SetNull(i_col);
-			}*/
+	for (cur_row = 0; cur_row < STANDARD_VECTOR_SIZE; ++cur_row) {
+		int64_t row_number = get_next_row_raw(raw_row);
+		if (row_number < 0) {
+			close();
+			is_finished = true;
+			return cur_row;
 		}
-		else // if (col.index == COL_ROWNUM)
+
+		for (size_t i_col = 0; i_col < n_columns; ++i_col)
 		{
-			writer.Write(row_number);
+			const IngestColumnDefinition& col = schema.columns[i_col];
+			auto &cnv = *m_columns[i_col];
+			if (col.index >= 0)
+			{
+				CellRaw& cell = raw_row[col.index];
+				if (col.index >= (int)raw_row.size() || schema.remove_null_strings && cell_null_str(cell))
+				{
+					cnv.WriteNull();
+					continue;
+				}
+				bool res = std::visit(overloaded{
+				[&](const CellRawDate& v) -> bool { return cnv.WriteExcelDate(v.d); },
+				[&](auto v) -> bool { return cnv.Write(v); },
+				}, cell);
+				if (!res) {
+					cnv.WriteNull();
+				}
+				/*if (col.is_json)
+				{
+					const std::string* sp = std::get_if<std::string>(&cell);
+					if (!sp || !sp->empty() && !js_dispatcher.parse_string(*sp, json_columns[i_col].get())) {
+					//	row->update_error(i_col, { ErrorCode::TypeError, ConvertRawToString(cell) });
+						writer.SetNull();
+					}
+				}
+				else // XML
+				{
+					//if (!xml_handler.convert_cell(cell, &xml_columns[i_col]))
+					//	row->update_error(i_col, { ErrorCode::TypeError, ConvertRawToString(cell) });
+					//writer.SetNull(i_col);
+				}*/
+			}
+			else // if (col.index == COL_ROWNUM)
+			{
+				cnv.Write(row_number);
+			}
 		}
 	}
-	return true;
+	return STANDARD_VECTOR_SIZE;
 }
 
-bool JSONParser::GetNextRow(Row &row)
-{
-	return false;
-	//JSONDispatcher dispatcher;
-	//JSONFileAdapter adapter(row);
-	//JSONTopListStruct top(*this, row, &adapter);
-	//dispatcher.parse_file(m_reader.get(), &top, m_schema);
-	//return top.m_is_aborted;
-}
 
-bool XMLParser::GetNextRow(Row &row)
+/*bool XMLParser::GetNextRow(Row &row)
 {
 	return false;
 	//XMLRoot root;
@@ -1647,7 +1036,7 @@ bool XMLParser::GetNextRow(Row &row)
 	//root.assign(root_list);
 	//XMLParseHandler handler(&root);
 	//return do_parse(handler);
-}
+}*/
 
 int ParserImpl::get_percent_complete()
 {
@@ -1700,7 +1089,7 @@ template<ColumnType column_type>
 class TType
 {
 public:
-	bool create_schema(ColumnDefinition& col) const
+	bool create_schema(IngestColumnDefinition& col) const
 	{
 		if (m_valid)
 			col.column_type = column_type;
@@ -1761,7 +1150,7 @@ public:
 		}, cell);
 	}
 
-	bool create_schema(ColumnDefinition& col) const
+	bool create_schema(IngestColumnDefinition& col) const
 	{
 		if (m_valid)
 			col.column_type = m_type;
@@ -1986,7 +1375,7 @@ public:
 		}, cell);
 	}
 
-	bool create_schema(ColumnDefinition& col) const
+	bool create_schema(IngestColumnDefinition& col) const
 	{
 		if (m_valid)
 		{
@@ -2039,7 +1428,7 @@ public:
 		}, cell);
 	}
 
-	bool create_schema(ColumnDefinition& col) const
+	bool create_schema(IngestColumnDefinition& col) const
 	{
 		if (m_valid && m_have_digits && m_have_letters)
 		{
@@ -2085,7 +1474,7 @@ public:
 		}, cell);
 	}
 
-	bool create_schema(ColumnDefinition& col) const
+	bool create_schema(IngestColumnDefinition& col) const
 	{
 		if (m_valid && m_have_padding)
 		{
@@ -2148,7 +1537,7 @@ public:
 		return 1;
 	}
 
-	bool create_schema(ColumnDefinition& col)
+	bool create_schema(IngestColumnDefinition& col)
 	{
 		if (m_valid)
 		{
@@ -2188,7 +1577,7 @@ public:
 			s.find(',') != std::string::npos && !std::regex_search(s, _re_not_list_item);
 	}
 
-	bool create_schema(ColumnDefinition& col) const
+	bool create_schema(IngestColumnDefinition& col) const
 	{
 		if (m_valid)
 		{
@@ -2268,7 +1657,7 @@ public:
 			p.second.m_saw_tag = false;
 	}
 
-	bool create_column_schema(ColumnDefinition& col) const
+	bool create_column_schema(IngestColumnDefinition& col) const
 	{
 		if (m_children.empty())
 			return false;
@@ -2279,7 +1668,7 @@ public:
 		return true;
 	}
 
-	bool create_file_schema(std::vector<ColumnDefinition>& fields) const
+	bool create_file_schema(std::vector<IngestColumnDefinition>& fields) const
 	{
 		if (m_children.empty())
 			return false;
@@ -2299,7 +1688,7 @@ public:
 	}
 
 private:
-	void create_schema(ColumnDefinition& col) const
+	void create_schema(IngestColumnDefinition& col) const
 	{
 		if (!m_children.empty())
 		{
@@ -2311,7 +1700,7 @@ private:
 		col.is_list = m_is_list;
 	}
 
-	void create_schema(std::vector<ColumnDefinition>& fields, int col_index = 0) const
+	void create_schema(std::vector<IngestColumnDefinition>& fields, int col_index = 0) const
 	{
 		for (const auto& [key, value] : m_children)
 		{
@@ -2321,7 +1710,7 @@ private:
 		if (m_has_single_value)
 		{
 			fields.push_back({ "#text", ColumnType::String, col_index, false });
-			ColumnDefinition& col = fields.back();
+			IngestColumnDefinition& col = fields.back();
 			std::apply([&col](auto&& ... args) { return (args.create_schema(col) || ...); }, m_types);
 		}
 	}
@@ -2400,7 +1789,7 @@ public:
 		return true;
 	}
 
-	bool create_schema(ColumnDefinition& col) const
+	bool create_schema(IngestColumnDefinition& col) const
 	{
 		if (m_valid)
 		{
@@ -2422,10 +1811,11 @@ class JSONInferObject : public JSONHandler
 {
 public:
 	virtual ~JSONInferObject() = default;
+	virtual bool Null() { return true; }
 	virtual bool Key(const char* s, int length, bool copy, JSONDispatcher* dispatcher) override;
-	bool create_schema(ColumnDefinition& col) const;
-	bool create_geometry(ColumnDefinition& col) const;
-	void create_schema(std::vector<ColumnDefinition>& fields, int col_index = 0) const;
+	bool create_schema(IngestColumnDefinition& col) const;
+	bool create_geometry(IngestColumnDefinition& col) const;
+	void create_schema(std::vector<IngestColumnDefinition>& fields, int col_index = 0) const;
 
 	infer_children<JSONInferValue> m_children;
 };
@@ -2434,6 +1824,7 @@ class JSONInferValue : public JSONHandler
 {
 public:
 	virtual ~JSONInferValue() = default;
+	virtual bool Null() { return true; }
 	virtual bool Bool(bool b) override { m_value_types |= ValueBool; test_value(b); return true; }
 	virtual bool Int(int i) override { m_value_types |= ValueNumber; test_value((int64_t)i); return true; }
 	virtual bool Uint(unsigned i) override { m_value_types |= ValueNumber; test_value((int64_t)i); return true; }
@@ -2473,7 +1864,7 @@ public:
 			m_flags |= ValueSingle;
 	}
 
-	void create_schema(ColumnDefinition& col) const
+	void create_schema(IngestColumnDefinition& col) const
 	{
 		if ((m_flags & ValueSingle) && (m_flags & (ValueObject | ValueArray)))
 			col.column_type = ColumnType::Variant;
@@ -2532,7 +1923,7 @@ bool JSONInferObject::Key(const char* s, int length, bool copy, JSONDispatcher* 
 	return true;
 }
 
-bool JSONInferObject::create_schema(ColumnDefinition& col) const
+bool JSONInferObject::create_schema(IngestColumnDefinition& col) const
 {
 	if (m_children.empty())
 		return false;
@@ -2541,7 +1932,7 @@ bool JSONInferObject::create_schema(ColumnDefinition& col) const
 	return true;
 }
 
-bool JSONInferObject::create_geometry(ColumnDefinition& col) const
+bool JSONInferObject::create_geometry(IngestColumnDefinition& col) const
 {
 	if (m_children.size() < 2 || m_children.size() > 3 || !m_children.find("type"))
 		return false;
@@ -2564,12 +1955,12 @@ bool JSONInferObject::create_geometry(ColumnDefinition& col) const
 	return true;
 }
 
-void JSONInferObject::create_schema(std::vector<ColumnDefinition>& fields, int col_index) const
+void JSONInferObject::create_schema(std::vector<IngestColumnDefinition>& fields, int col_index) const
 {
 	for (const auto& [key, value] : m_children)
 	{
 		fields.push_back({ key, ColumnType::String, col_index, false });
-		ColumnDefinition& col = fields.back();
+		IngestColumnDefinition& col = fields.back();
 		if (key == "geometry" && value.m_obj.create_geometry(col))
 		{
 			if (value.m_flags & JSONInferValue::ValueArray)
@@ -2604,7 +1995,7 @@ public:
 		return true;
 	}
 
-	bool create_schema(ColumnDefinition& col) const
+	bool create_schema(IngestColumnDefinition& col) const
 	{
 		if (m_valid)
 		{
@@ -2663,7 +2054,7 @@ public:
 		return true;
 	}
 
-	bool create_schema(ColumnDefinition& col) const
+	bool create_schema(IngestColumnDefinition& col) const
 	{
 		if (m_valid)
 		{
@@ -2692,7 +2083,7 @@ public:
 		}
 		return true;
 	}
-	void create_schema(ColumnDefinition& col)
+	void create_schema(IngestColumnDefinition& col)
 	{
 		if (!empty) {
 			std::apply([&col](auto&& ... args) { (args.create_schema(col) || ...); }, m_types);
@@ -2923,7 +2314,7 @@ bool JSONParser::do_infer_schema()
 	const size_t SAMPLE_SIZE = 1024 * 1024 * 5;
 
 	m_schema.columns.clear();
-	if (!open())
+	if (!m_reader->is_file() || !m_reader->open())
 		return false;
 	std::string sample(SAMPLE_SIZE, '\0');
 	sample.resize(m_reader->read(&sample[0], SAMPLE_SIZE));
@@ -2965,9 +2356,9 @@ bool ParserImpl::infer_schema()
 	struct BuildColIndices
 	{
 		int dest_index;
-		void traverse(ColumnDefinition& parent)
+		void traverse(IngestColumnDefinition& parent)
 		{
-			for (ColumnDefinition& col : parent.fields)
+			for (IngestColumnDefinition& col : parent.fields)
 			{
 				col.dest_index = dest_index++;
 				if (col.column_type == ColumnType::Struct)
@@ -2978,7 +2369,7 @@ bool ParserImpl::infer_schema()
 
 	for (size_t i_col = 0; i_col < schema.columns.size(); ++i_col)
 	{
-		ColumnDefinition& col = schema.columns[i_col];
+		IngestColumnDefinition& col = schema.columns[i_col];
 		if (col.column_type == ColumnType::Struct)
 		{
 			col.dest_index = i_col;

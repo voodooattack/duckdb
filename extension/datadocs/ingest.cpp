@@ -4,7 +4,6 @@
 #endif
 
 #include "datadocs-extension.hpp"
-#include "vector_converter.hpp"
 #include "datadocs.hpp"
 #include "inferrer.h"
 
@@ -12,65 +11,20 @@ namespace duckdb {
 
 namespace {
 
-struct TypeInfo {
-	LogicalType type;
-	const VectorConverter::VTable *vtbl;
-};
-
-static const TypeInfo inferrer_types[] = {
-	{LogicalTypeId::VARCHAR, &VectorConverter::VTBL_VARCHAR},
-	{LogicalTypeId::BOOLEAN, &VectorConverter::VTBL_BOOL},
-	{LogicalTypeId::BIGINT, &VectorConverter::VTBL_BIGINT},
-	{LogicalTypeId::DOUBLE, &VectorConverter::VTBL_DOUBLE},
-	{LogicalTypeId::DATE, &VectorConverter::VTBL_DATE},
-	{LogicalTypeId::TIME, &VectorConverter::VTBL_TIME},
-	{LogicalTypeId::TIMESTAMP, &VectorConverter::VTBL_TIMESTAMP},
-	{LogicalTypeId::BLOB, &VectorConverter::VTBL_BLOB},
-	{DDNumericType, &VectorConverter::VTBL_NUMERIC},
-	{LogicalTypeId::VARCHAR, &VectorConverter::VTBL_GEO},
-	{LogicalTypeId::STRUCT, &VectorConverter::VTBL_STRUCT},
-	{DDVariantType, &VectorConverter::VTBL_VARIANT},
-};
-
 struct IngestBindData : public TableFunctionData {
 	explicit IngestBindData(const string &file_name)
-	    : parser(Ingest::Parser::get_parser(file_name)) {
-	}
-
-	static LogicalType ProcessColumn(const Ingest::ColumnDefinition &col, vector<VectorConverter> &columns) {
-		TypeInfo tp;
-		if (col.column_type == Ingest::ColumnType::Struct) {
-//			columns.emplace_back(ST);
-			child_list_t<LogicalType> child_types;
-			for (const auto &field : col.fields) {
-				child_types.push_back({field.column_name, ProcessColumn(field, columns.back().children)});
-			}
-//			tp = LogicalType::STRUCT(std::move(child_types));
-		} else {
-			tp = inferrer_types[static_cast<size_t>(col.column_type)];
-			columns.emplace_back(*tp.vtbl, col.format);
-		}
-		if (col.is_list) {
-//			tp = LogicalType::LIST(tp);
-//			columns.emplace_back(tp);
-		}
-		return tp.type;
+	    : parser(Parser::get_parser(file_name)) {
 	}
 
 	void BindSchema(vector<LogicalType> &return_types, vector<string> &names) {
 		if (!parser->infer_schema()) {
 			throw InvalidInputException("Cannot ingest file");
 		}
-		Ingest::Schema *schema = parser->get_schema();
-		for (const auto &col : schema->columns) {
-			names.push_back(col.column_name);
-			return_types.push_back(ProcessColumn(col, columns));
-		}
+		parser->BuildColumns();
+		parser->BindSchema(return_types, names);
 	}
 
-	std::unique_ptr<Ingest::Parser> parser;
-	bool is_finished = false;
-	vector<VectorConverter> columns;
+	std::unique_ptr<Parser> parser;
 };
 
 static unique_ptr<FunctionData> IngestBind(ClientContext &context, TableFunctionBindInput &input,
@@ -92,20 +46,12 @@ static unique_ptr<GlobalTableFunctionState> IngestInit(ClientContext &context, T
 
 static void IngestImpl(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
 	auto *bind_data = (IngestBindData *)data_p.bind_data;
-	if (bind_data->is_finished) {
+	auto &parser = *bind_data->parser;
+	if (parser.is_finished) {
 		return;
 	}
-	auto &parser = *bind_data->parser;
-	VectorRow row(output, bind_data->columns);
-	while (row.i_row < STANDARD_VECTOR_SIZE) {
-		if (!parser.GetNextRow(row)) {
-			parser.close();
-			bind_data->is_finished = true;
-			break;
-		}
-		++row.i_row;
-	}
-	output.SetCardinality(row.i_row);
+	idx_t n_rows = parser.FillChunk(output);
+	output.SetCardinality(n_rows);
 }
 
 } // namespace

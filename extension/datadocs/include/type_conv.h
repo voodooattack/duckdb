@@ -5,7 +5,7 @@
 
 #include "inferrer.h"
 
-namespace Ingest {
+namespace duckdb {
 
 bool string0x_to_bytes(const char* begin, const char* end, char* dst);
 bool string_to_decimal(const char* begin, const char* end, std::string& data);

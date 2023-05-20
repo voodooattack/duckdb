@@ -82,9 +82,13 @@ string_t &VectorWriter::ReserveString(idx_t size) {
 	return FlatVector::GetData<string_t>(vec)[i_row] = StringVector::EmptyString(vec, size);
 }
 
-VectorListWriter VectorWriter::SetList() noexcept {
+list_entry_t &VectorWriter::GetList() noexcept {
 	D_ASSERT(vec.GetType().id() == LogicalTypeId::LIST);
-	return {(VectorListBuffer &)*vec.GetAuxiliary(), FlatVector::GetData<list_entry_t>(vec)[i_row]};
+	return FlatVector::GetData<list_entry_t>(vec)[i_row];
+}
+
+VectorListWriter VectorWriter::SetList() noexcept {
+	return {(VectorListBuffer &)*vec.GetAuxiliary(), GetList()};
 }
 
 VectorStructWriter VectorWriter::SetStruct() noexcept {

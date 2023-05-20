@@ -11,7 +11,7 @@
 
 using namespace std::literals;
 
-namespace Ingest {
+namespace duckdb {
 
 static const std::regex _re_zip_hidden_files (R"((/|^)((\.DS_Store|desktop\.ini|thumbs\.db)$)|(__MACOSX|\.vscode|\.idea|\.coverage)/|~\$)",
 	std::regex::nosubs | std::regex::icase);

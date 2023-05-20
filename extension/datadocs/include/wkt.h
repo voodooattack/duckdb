@@ -3,7 +3,7 @@
 
 #include <string>
 
-namespace Ingest {
+namespace duckdb {
 
 bool wkt_to_bytes(const char*& begin, const char* end, std::string& data);
 

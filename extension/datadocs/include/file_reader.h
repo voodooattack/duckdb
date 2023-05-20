@@ -6,7 +6,7 @@
 
 #include "xls/xlscommon.h"
 
-namespace Ingest {
+namespace duckdb {
 
 class BaseReader
 {

@@ -6,7 +6,7 @@
 
 using namespace std::literals;
 
-namespace Ingest {
+namespace duckdb {
 
 //template <> constexpr std::string_view XLParser<xls::WorkBook>::file_signature = "\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1"sv;
 //template <> constexpr std::string_view XLParser<xls::WorkBookX>::file_signature = "PK\x03\x04"sv;

@@ -13,7 +13,7 @@
 
 using namespace std::literals;
 
-namespace Ingest {
+namespace duckdb {
 
 namespace {
 

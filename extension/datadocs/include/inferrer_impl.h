@@ -3,10 +3,11 @@
 
 #include <memory>
 
+#include "column.hpp"
 #include "inferrer.h"
 #include "json.h"
 
-namespace Ingest {
+namespace duckdb {
 
 const int INFER_MAX_ROWS = 100;
 
@@ -19,7 +20,11 @@ typedef std::vector<CellRaw> RowRaw;
 
 class Column;
 class BaseReader;
-typedef int (*ConvertFunc)(CellRaw& src, Cell& dst, const ColumnDefinition& format);
+typedef int (*ConvertFunc)(CellRaw& src, Cell& dst, const IngestColumnDefinition& format);
+
+class IngestColTable;
+
+IngestColBase* BuildColumn(const IngestColumnDefinition &col, idx_t &cur_row);
 
 class ParserImpl : public Parser
 {
@@ -28,7 +33,9 @@ public:
 	virtual bool infer_schema() override;
 	virtual bool open() override;
 	virtual void close() override;
-	virtual bool GetNextRow(Row &row) override;
+	virtual void BuildColumns() override;
+	virtual void BindSchema(vector<LogicalType> &return_types, vector<string> &names) override;
+	virtual idx_t FillChunk(DataChunk &output) override;
 	virtual int get_percent_complete() override;
 	virtual size_t get_sheet_count() override;
 	virtual std::vector<std::string> get_sheet_names() override;
@@ -48,8 +55,8 @@ protected:
 	void build_column_info(std::vector<Column>& columns);
 	void infer_table(const std::string* comment);
 
-	//JSONDispatcher js_dispatcher;
-	//std::vector<std::unique_ptr<JSONHandler>> json_columns;
+	vector<std::unique_ptr<IngestColBase>> m_columns;
+	idx_t cur_row;
 };
 
 }

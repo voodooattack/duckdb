@@ -3,7 +3,7 @@
 
 #include "file_reader.h"
 
-namespace Ingest {
+namespace duckdb {
 
 BaseReader::BaseReader(const std::string& filename) :
 	m_filename(filename),

@@ -79,7 +79,7 @@ add_subdirectory(geo)
 set(DATADOCS_EXTENSION_FILES
 	datadocs-extension.cpp
 	vector_proxy.cpp
-	vector_converter.cpp
+	column.cpp
 	converters.cpp
 	variant.cpp
 	xls/src/endian.c

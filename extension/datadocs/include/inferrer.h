@@ -7,11 +7,9 @@
 #include <string>
 #include <variant>
 
-namespace duckdb {
-	class VectorRow;
-}
+#include "duckdb.hpp"
 
-namespace Ingest {
+namespace duckdb {
 
 enum class ColumnType : uint8_t {
 	String,
@@ -75,7 +73,7 @@ struct ErrorType
 
 enum ServiceColumns { COL_ROWNUM = -1 };
 
-struct ColumnDefinition
+struct IngestColumnDefinition
 {
 	std::string column_name;
 	ColumnType column_type;
@@ -85,7 +83,7 @@ struct ColumnDefinition
 	double bytes_per_value; // estimate for strings
 	bool is_json;
 	int dest_index; // for nested Struct columns this is output column
-	std::vector<ColumnDefinition> fields; // nested columns for Struct type
+	std::vector<IngestColumnDefinition> fields; // nested columns for Struct type
 };
 
 enum SchemaStatus { STATUS_OK = 0, STATUS_INVALID_FILE = 1 };
@@ -93,7 +91,7 @@ enum SchemaStatus { STATUS_OK = 0, STATUS_INVALID_FILE = 1 };
 class Schema
 {
 public:
-	std::vector<ColumnDefinition> columns;
+	std::vector<IngestColumnDefinition> columns;
 	SchemaStatus status = STATUS_OK;
 	bool remove_null_strings = true; // "NULL" and "null" strings signify null values
 	bool has_truncated_string = false; // if a string longer than allowed limit was truncated
@@ -133,8 +131,6 @@ public:
 	virtual ~JSONSchema() = default;
 };
 
-using Row = duckdb::VectorRow;
-
 class Parser
 {
 public:
@@ -144,7 +140,9 @@ public:
 	virtual Schema* get_schema() = 0; // returns pointer to instance member, do not delete
 	virtual bool open() = 0;
 	virtual void close() = 0;
-	virtual bool GetNextRow(Row &row) = 0;
+	virtual void BuildColumns() = 0;
+	virtual void BindSchema(vector<LogicalType> &return_types, vector<string> &names) = 0;
+	virtual idx_t FillChunk(DataChunk &output) = 0;
 	virtual int get_percent_complete() = 0;
 	virtual size_t get_sheet_count() = 0;
 	virtual std::vector<std::string> get_sheet_names() = 0;
@@ -154,6 +152,8 @@ public:
 	virtual std::vector<std::string> get_file_names() = 0;
 	virtual bool select_file(const std::string& file_name) = 0;
 	virtual bool select_file(size_t file_number) = 0;
+public:
+	bool is_finished = false;
 };
 
 }

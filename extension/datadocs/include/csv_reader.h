@@ -4,7 +4,7 @@
 #include "inferrer_impl.h"
 #include "file_reader.h"
 
-namespace Ingest {
+namespace duckdb {
 
 class ucvt_streambuf;
 

@@ -8,7 +8,7 @@
 
 #include "utility.h"
 
-namespace Ingest {
+namespace duckdb {
 
 void rtrim(std::string& s)
 {

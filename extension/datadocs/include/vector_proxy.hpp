@@ -95,6 +95,7 @@ public:
 	void SetString(string_t data);
 	void SetVectorString(string_t data) noexcept;
 	string_t &ReserveString(idx_t size);
+	list_entry_t &GetList() noexcept;
 	VectorListWriter SetList() noexcept;
 	VectorStructWriter SetStruct() noexcept;
 

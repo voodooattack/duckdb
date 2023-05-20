@@ -6,7 +6,7 @@
 
 #include "file_reader.h"
 
-namespace Ingest {
+namespace duckdb {
 
 class JSONDispatcher;
 
@@ -14,7 +14,7 @@ class JSONHandler
 {
 public:
 	virtual ~JSONHandler() = default;
-	virtual bool Null() { return true; }
+	virtual bool Null() { return false; }
 	virtual bool Bool(bool b) { return false; }
 	virtual bool Int(int i) { return false; }
 	virtual bool Uint(unsigned i) { return false; }
@@ -52,9 +52,11 @@ public:
 	void skip() { m_value = &m_skip; }
 
 	bool parse_string(const std::string& input, JSONHandler* handler);
-	//void parse_file(BaseReader* reader, JSONHandler* top, const JSONSchema& schema);
+	void init(JSONHandler* root);
 
 	JSONHandler* m_value = nullptr;
+	JSONHandler* m_top = nullptr;
+	bool m_suspended;
 
 protected:
 	class JSONSkip : public JSONHandler
@@ -89,11 +91,9 @@ protected:
 		size_t m_level = 0;
 	};
 
-	JSONHandler* m_top = nullptr;
 	std::vector<JSONHandler*> m_stack;
 	JSONSkip m_skip;
 };
 
 }
-
 #endif

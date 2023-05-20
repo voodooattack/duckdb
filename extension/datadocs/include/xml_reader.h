@@ -8,7 +8,7 @@
 
 struct XML_ParserStruct;
 
-namespace Ingest {
+namespace duckdb {
 
 class XMLHandlerBase
 {
@@ -64,7 +64,8 @@ public:
 	virtual Schema* get_schema() override { return &m_schema; }
 	virtual bool open() override;
 	virtual void close() override;
-	virtual bool GetNextRow(Row &row) override;
+	//virtual void BuildColumns() override;
+	//virtual idx_t FillChunk(DataChunk &output) override;
 	virtual int get_percent_complete() override;
 
 protected:

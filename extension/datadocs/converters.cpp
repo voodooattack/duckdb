@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include <charconv>
 
 #include "duckdb/common/types/cast_helpers.hpp"
@@ -15,7 +16,7 @@ static void FormatTwoDigits(int value, char buffer[], idx_t &length) {
 	if (value < 10) {
 		buffer[length++] = '0' + value;
 	} else {
-		idx_t index = (idx_t)value * 2;
+		size_t index = (size_t)value * 2;
 		buffer[length++] = duckdb_fmt::internal::data::digits[index];
 		buffer[length++] = duckdb_fmt::internal::data::digits[index + 1];
 	}
@@ -81,7 +82,7 @@ string IntervalToISOString(const interval_t &interval) {
 	}                                                                                                                  \
 	cur_part = PART
 
-bool IntervalFromISOString(const char *str, idx_t len, interval_t &result) {
+bool IntervalFromISOString(const char *str, size_t len, interval_t &result) {
 	const char *end = str + len;
 	if (len < 3 || *str++ != 'P') {
 		return false;

@@ -13,7 +13,7 @@
 
 #include "wkt.h"
 
-namespace Ingest {
+namespace duckdb {
 
 namespace x3 = boost::spirit::x3;
 namespace ascii = boost::spirit::x3::ascii;
