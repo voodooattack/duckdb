@@ -198,10 +198,12 @@ struct IngestColChildrenMap {
 	}
 	size_t GetIndex(const string &s) {
 		auto it = keys.find(s);
-		if (it == keys.end() || valid[it->second])
+		if (it == keys.end())
 			return -1;
-		valid[it->second] = true;
-		++cnt_valid;
+		if (!valid[it->second]) {
+			valid[it->second] = true;
+			++cnt_valid;
+		}
 		return it->second;
 	}
 

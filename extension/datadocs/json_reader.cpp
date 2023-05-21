@@ -128,7 +128,7 @@ public:
 class JSONList : public JSONHandler
 {
 public:
-	JSONList(const IngestColumnDefinition &col) :  buffer(nullptr), column(BuildColumn(col, cur_row)) {
+	JSONList(const IngestColumnDefinition &col) : buffer(nullptr), column(BuildColumn(col, cur_row)) {
 	}
 
 	virtual bool Null() { Append(); column->WriteNull(); return true; }

@@ -54,25 +54,51 @@ private:
 	}
 };
 
+class XMLBase
+{
+public:
+	//static XMLBase* create(const IngestColumnDefinition& col, Row::ColumnAdapter* adapter);
+	virtual ~XMLBase() = default;
+	virtual XMLBase* new_tag(const char* name, const char** atts) { return nullptr; }
+	virtual void first_tag() {}
+	virtual bool second_tag() { return false; }
+	virtual void end_tag() {}
+	virtual bool new_text(std::string&& s) { return true; }
+	bool m_saw_tag;
+};
+
+class XMLRoot : public XMLBase
+{
+public:
+	void assign(XMLBase* xml) { m_root.reset(xml); }
+	virtual ~XMLRoot() = default;
+	virtual XMLBase* new_tag(const char* name, const char** atts) override
+	{
+		m_root->first_tag();
+		return m_root.get();
+	}
+//protected:
+	std::unique_ptr<XMLBase> m_root;
+};
+
 class XMLParser : public ParserImpl
 {
 public:
-	static ParserImpl* create_parser(std::shared_ptr<BaseReader> reader);
 	XMLParser(std::shared_ptr<BaseReader> reader);
 	virtual ~XMLParser() override;
 	virtual bool do_infer_schema() override;
 	virtual Schema* get_schema() override { return &m_schema; }
 	virtual bool open() override;
 	virtual void close() override;
-	//virtual void BuildColumns() override;
-	//virtual idx_t FillChunk(DataChunk &output) override;
+	virtual void BuildColumns() override;
+	virtual void BindSchema(vector<LogicalType> &return_types, vector<string> &names) override;
+	virtual idx_t FillChunk(DataChunk &output) override;
 	virtual int get_percent_complete() override;
 
 protected:
-	bool do_parse(XMLHandlerBase& handler);
-
 	Schema m_schema;
 	std::shared_ptr<BaseReader> m_reader;
+	XMLRoot root;
 };
 
 }
