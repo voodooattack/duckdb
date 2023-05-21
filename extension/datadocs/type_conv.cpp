@@ -13,6 +13,13 @@
 
 namespace duckdb {
 
+const std::unordered_map<string, bool> bool_dict {
+	{"0", false}, {"1", true},
+	{"false", false}, {"False", false}, {"FALSE", false}, {"true", true}, {"True", true}, {"TRUE", true},
+	{"n", false}, {"N", false}, {"no", false}, {"No", false}, {"NO", false},
+	{"y", true}, {"Y", true}, {"yes", true}, {"Yes", true}, {"YES", true}
+};
+
 static constexpr unsigned pow10i[] = {1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000};
 
 bool string0x_to_bytes(const char* begin, const char* end, char* dst)

@@ -680,49 +680,44 @@ private:
 	//}
 //}
 
+JSONValue *JSONBuildColumn(const IngestColumnDefinition &col, idx_t &cur_row) {
+	if (col.is_list) {
+		if (col.column_type == ColumnType::Struct) {
+			return new JSONListWrapper<JSONListStruct>(col, cur_row);
+		}
+		return new JSONListWrapper<JSONList>(col, cur_row);
+	}
+	switch(col.column_type) {
+	case ColumnType::String: return new JSONCol<IngestColVARCHAR>(col.column_name, cur_row);
+	case ColumnType::Boolean: return new JSONCol<IngestColBOOLEAN>(col.column_name, cur_row);
+	case ColumnType::Integer: return new JSONCol<IngestColBIGINT>(col.column_name, cur_row);
+	case ColumnType::Decimal: return new JSONCol<IngestColDOUBLE>(col.column_name, cur_row);
+	case ColumnType::Date: return new JSONCol<IngestColDATE>(col.column_name, cur_row, col.format);
+	case ColumnType::Time: return new JSONCol<IngestColTIME>(col.column_name, cur_row, col.format);
+	case ColumnType::Datetime: return new JSONCol<IngestColTIMESTAMP>(col.column_name, cur_row, col.format);
+	case ColumnType::Bytes:
+		if (col.format == "base64") {
+			return new JSONCol<IngestColBLOBBase64>(col.column_name, cur_row);
+		}
+		return new JSONCol<IngestColBLOBHex>(col.column_name, cur_row);
+	case ColumnType::Numeric: return new JSONCol<IngestColNUMERIC>(col.column_name, cur_row);
+	case ColumnType::Geography: return new JSONCol<IngestColGEO>(col.column_name, cur_row);
+	case ColumnType::Struct: return new JSONStruct(col, cur_row);
+	case ColumnType::Variant: return new JSONCol<IngestColVARIANT>(col.column_name, cur_row);
+	default:
+		D_ASSERT(false);
+		return new JSONCol<IngestColBase>(col.column_name, cur_row);
+	}
+}
+
 static void JSONBuildColumns(const vector<IngestColumnDefinition> &fields, std::unordered_map<string, size_t> &keys,
     vector<std::unique_ptr<JSONValue>> &columns, idx_t &cur_row) {
-	JSONValue *column;
 	for (const auto &col : fields) {
 		if (col.index < 0) {
 			continue;
 		}
-		if (col.is_list) {
-			if (col.column_type == ColumnType::Struct) {
-				column = new JSONListWrapper<JSONListStruct>(col, cur_row);
-			} else {
-				column = new JSONListWrapper<JSONList>(col, cur_row);
-			}
-		} else {
-			switch(col.column_type) {
-			case ColumnType::String: column = new JSONCol<IngestColVARCHAR>(col.column_name, cur_row); break;
-			case ColumnType::Boolean: column = new JSONCol<IngestColBOOLEAN>(col.column_name, cur_row); break;
-			case ColumnType::Integer: column = new JSONCol<IngestColBIGINT>(col.column_name, cur_row); break;
-			case ColumnType::Decimal: column = new JSONCol<IngestColDOUBLE>(col.column_name, cur_row); break;
-			case ColumnType::Date: column = new JSONCol<IngestColDATE>(col.column_name, cur_row, col.format); break;
-			case ColumnType::Time: column = new JSONCol<IngestColTIME>(col.column_name, cur_row, col.format); break;
-			case ColumnType::Datetime: column = new JSONCol<IngestColTIMESTAMP>(col.column_name, cur_row, col.format); break;
-			case ColumnType::Bytes:
-				if (col.format == "base64") {
-					column = new JSONCol<IngestColBLOBBase64>(col.column_name, cur_row);
-				} else {
-					column = new JSONCol<IngestColBLOBHex>(col.column_name, cur_row);
-				}
-				break;
-			case ColumnType::Numeric: column = new JSONCol<IngestColNUMERIC>(col.column_name, cur_row); break;
-			case ColumnType::Geography: column = new JSONCol<IngestColGEO>(col.column_name, cur_row); break;
-			case ColumnType::Struct:
-				column = new JSONStruct(col, cur_row);
-				break;
-			case ColumnType::Variant: column = new JSONCol<IngestColVARIANT>(col.column_name, cur_row); break;
-			default:
-				D_ASSERT(false);
-				column = new JSONCol<IngestColBase>(col.column_name, cur_row);
-				break;
-			}
-		}
 		keys.emplace(col.column_name, columns.size());
-		columns.push_back(std::unique_ptr<JSONValue>(column));
+		columns.push_back(std::unique_ptr<JSONValue>(JSONBuildColumn(col, cur_row)));
 	}
 }
 

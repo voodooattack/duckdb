@@ -13,10 +13,10 @@ XMLHandlerBase::~XMLHandlerBase()
 		XML_ParserFree(m_parser);
 }
 
-bool XMLHandlerBase::parse_string(const std::string& input)
+bool XMLHandlerBase::parse_string(string_t input)
 {
 	create_parser();
-	bool res = XML_Parse(m_parser, input.data(), input.size(), 0) == XML_STATUS_OK;
+	bool res = XML_Parse(m_parser, input.GetDataUnsafe(), input.GetSize(), 0) == XML_STATUS_OK;
 	XML_ParserFree(m_parser); m_parser = nullptr;
 	return res;
 }
@@ -54,59 +54,6 @@ void XMLHandlerBase::abort()
 {
 	XML_StopParser(m_parser, 0);
 }
-
-class XMLParseHandler : public XMLHandler<XMLParseHandler>
-{
-public:
-	XMLParseHandler(XMLBase* top = nullptr) : m_top(top) {}
-
-	bool start_tag(const char* name, const char** atts)
-	{
-		XMLBase* new_top = m_top->new_tag(name, atts);
-		if (!new_top)
-			return false;
-		m_stack.push_back(m_top);
-		m_top = new_top;
-		return true;
-	}
-
-	void end_tag()
-	{
-		m_top->end_tag();
-		m_top = m_stack.back();
-		m_stack.pop_back();
-	}
-
-	bool new_text()
-	{
-		bool res = m_top->new_text(std::move(m_cur_text));
-		m_cur_text.clear();
-		return res;
-	};
-
-	bool convert_cell(CellRaw& src, XMLBase* root)
-	{
-		const std::string* sp = std::get_if<std::string>(&src);
-		if (!sp)
-			return false;
-		if (sp->empty())
-			return true;
-		m_top = root;
-		m_stack.clear();
-		m_cur_text.clear();
-		return parse_string(*sp);
-	}
-private:
-	XMLBase* m_top;
-	std::vector<XMLBase*> m_stack;
-};
-
-class XMLValueBase : public XMLBase
-{
-public:
-	XMLValueBase(IngestColBase *column) : column(*column) {}
-	IngestColBase &column;
-};
 
 static void XMLBuildColumns(const vector<IngestColumnDefinition> &fields, std::unordered_map<string, size_t> &keys,
     vector<std::unique_ptr<XMLValueBase>> &columns, idx_t &cur_row);
@@ -410,49 +357,44 @@ public:
 	XMLTopStruct m_struct;
 };
 
+XMLValueBase *XMLBuildColumn(const IngestColumnDefinition &col, idx_t &cur_row) {
+	if (col.is_list) {
+		if (col.column_type == ColumnType::Struct) {
+			return new XMLListStruct(col, cur_row);
+		}
+		return new XMLList(col, cur_row);
+	}
+	switch(col.column_type) {
+	case ColumnType::String: return new XMLCol<IngestColVARCHAR>(col.column_name, cur_row);
+	case ColumnType::Boolean: return new XMLCol<IngestColBOOLEAN>(col.column_name, cur_row);
+	case ColumnType::Integer: return new XMLCol<IngestColBIGINT>(col.column_name, cur_row);
+	case ColumnType::Decimal: return new XMLCol<IngestColDOUBLE>(col.column_name, cur_row);
+	case ColumnType::Date: return new XMLCol<IngestColDATE>(col.column_name, cur_row, col.format);
+	case ColumnType::Time: return new XMLCol<IngestColTIME>(col.column_name, cur_row, col.format);
+	case ColumnType::Datetime: return new XMLCol<IngestColTIMESTAMP>(col.column_name, cur_row, col.format);
+	case ColumnType::Bytes:
+		if (col.format == "base64") {
+			return new XMLCol<IngestColBLOBBase64>(col.column_name, cur_row);
+		}
+		return new XMLCol<IngestColBLOBHex>(col.column_name, cur_row);
+	case ColumnType::Numeric: return new XMLCol<IngestColNUMERIC>(col.column_name, cur_row);
+	case ColumnType::Geography: return new XMLCol<IngestColGEO>(col.column_name, cur_row);
+	case ColumnType::Struct: return new XMLStruct(col, cur_row);
+	case ColumnType::Variant: return new XMLCol<IngestColVARIANT>(col.column_name, cur_row);
+	default:
+		D_ASSERT(false);
+		return new XMLCol<IngestColBase>(col.column_name, cur_row);
+	}
+}
+
 static void XMLBuildColumns(const vector<IngestColumnDefinition> &fields, std::unordered_map<string, size_t> &keys,
     vector<std::unique_ptr<XMLValueBase>> &columns, idx_t &cur_row) {
-	XMLValueBase *column;
 	for (const auto &col : fields) {
 		if (col.index < 0) {
 			continue;
 		}
-		if (col.is_list) {
-			if (col.column_type == ColumnType::Struct) {
-				column = new XMLListStruct(col, cur_row);
-			} else {
-				column = new XMLList(col, cur_row);
-			}
-		} else {
-			switch(col.column_type) {
-			case ColumnType::String: column = new XMLCol<IngestColVARCHAR>(col.column_name, cur_row); break;
-			case ColumnType::Boolean: column = new XMLCol<IngestColBOOLEAN>(col.column_name, cur_row); break;
-			case ColumnType::Integer: column = new XMLCol<IngestColBIGINT>(col.column_name, cur_row); break;
-			case ColumnType::Decimal: column = new XMLCol<IngestColDOUBLE>(col.column_name, cur_row); break;
-			case ColumnType::Date: column = new XMLCol<IngestColDATE>(col.column_name, cur_row, col.format); break;
-			case ColumnType::Time: column = new XMLCol<IngestColTIME>(col.column_name, cur_row, col.format); break;
-			case ColumnType::Datetime: column = new XMLCol<IngestColTIMESTAMP>(col.column_name, cur_row, col.format); break;
-			case ColumnType::Bytes:
-				if (col.format == "base64") {
-					column = new XMLCol<IngestColBLOBBase64>(col.column_name, cur_row);
-				} else {
-					column = new XMLCol<IngestColBLOBHex>(col.column_name, cur_row);
-				}
-				break;
-			case ColumnType::Numeric: column = new XMLCol<IngestColNUMERIC>(col.column_name, cur_row); break;
-			case ColumnType::Geography: column = new XMLCol<IngestColGEO>(col.column_name, cur_row); break;
-			case ColumnType::Struct:
-				column = new XMLStruct(col, cur_row);
-				break;
-			case ColumnType::Variant: column = new XMLCol<IngestColVARIANT>(col.column_name, cur_row); break;
-			default:
-				D_ASSERT(false);
-				column = new XMLCol<IngestColBase>(col.column_name, cur_row);
-				break;
-			}
-		}
 		keys.emplace(col.column_name, columns.size());
-		columns.push_back(std::unique_ptr<XMLValueBase>(column));
+		columns.push_back(std::unique_ptr<XMLValueBase>(XMLBuildColumn(col, cur_row)));
 	}
 }
 

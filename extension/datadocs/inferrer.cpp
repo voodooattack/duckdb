@@ -139,7 +139,7 @@ static bool cell_empty(const CellRaw& cell)
 static bool cell_null_str(const CellRaw& cell)
 {
 	const std::string* s = std::get_if<std::string>(&cell);
-	return s && (*s == "NULL" || *s == "null");
+	return s && (s->empty() || *s == "NULL" || *s == "null");
 }
 
 Parser* Parser::get_parser(const std::string& filename)
@@ -256,265 +256,6 @@ static std::string ConvertRawToString(CellRaw& src)
 	return std::move(std::get<std::string>(tmp));
 }
 
-static const std::unordered_map<std::string, bool> _bool_dict {
-	{"0", false}, {"1", true},
-	{"false", false}, {"False", false}, {"FALSE", false}, {"true", true}, {"True", true}, {"TRUE", true},
-	{"n", false}, {"N", false}, {"no", false}, {"No", false}, {"NO", false},
-	{"y", true}, {"Y", true}, {"yes", true}, {"Yes", true}, {"YES", true}
-};
-
-static int ConvertToBool(CellRaw& src, Cell& dst, const IngestColumnDefinition& format)
-{
-	return std::visit(overloaded{
-	[&](const std::string& s) -> int
-	{
-		if (s.empty())
-			return 0;
-		auto it = _bool_dict.find(s);
-		if (it == _bool_dict.end())
-			return -1; //throw std::invalid_argument("invalid value");
-		dst = it->second;
-		return 1;
-	},
-	[&](bool v) -> int
-	{
-		dst = v;
-		return 1;
-	},
-	[&](int64_t v) -> int
-	{
-		if (v != 0 && v != 1)
-			return -1;
-		dst = (bool)v;
-		return 1;
-	},
-	[](auto v) -> int
-	{ return -1;},
-	}, src);
-}
-
-static int ConvertToInteger(CellRaw& src, Cell& dst, const IngestColumnDefinition& format)
-{
-	return std::visit(overloaded{
-	[&](const std::string& s) -> int
-	{
-		if (s.empty())
-			return 0;
-
-		//xls::CellValue value;
-		//if (!xls::parse_number(s.data(), value, false))
-		//	return -1;
-		//if (value.type == xls::CellType::Integer)
-		//	dst = value.value_i;
-		//else
-		//{
-		//	double d = value.value_d;
-		//	if (!is_integer(d))
-		//		return -1;
-		//	dst = (int64_t)d;
-		//}
-
-		char* endptr; //size_t pos;
-		int64_t v = std::strtoll(s.data(), &endptr, 10); //std::stoll(s, &pos);
-		if (*endptr) //(pos != s.size())
-		{
-			xls::CellValue value;
-			if (!xls::parse_number(s.data(), value, true))
-				return -1;
-			double d = value.value_d;
-			if (!is_integer(d))
-				return -1;
-			//double d = std::strtod(s.data(), &endptr);
-			//if (*endptr || !is_integer(d))
-			//	return -1;
-			dst = (int64_t)d;
-			return 1;
-		}
-		dst = v;
-		return 1;
-	},
-	[&](double v) -> int
-	{
-		if (!is_integer(v))
-			return -1;
-		dst = (int64_t)v;
-		return 1;
-	},
-	[&](auto v) -> int
-	{
-		if constexpr (std::is_integral_v<decltype(v)>)
-		{
-			dst = static_cast<int64_t>(v);
-			return 1;
-		}
-		else
-			return -1;
-	},
-	}, src);
-}
-
-static int ConvertToDouble(CellRaw& src, Cell& dst, const IngestColumnDefinition& format)
-{
-	return std::visit(overloaded{
-	[&](const std::string& s) -> int
-	{
-		if (s.empty())
-			return 0;
-		xls::CellValue value;
-		if (!xls::parse_number(s.data(), value, true))
-			return -1;
-		dst = value.value_d;
-		//char* endptr; //size_t pos;
-		//double v = std::strtod(s.data(), &endptr); //double v = std::stod(s, &pos);
-		//if (*endptr) //(pos != s.size())
-		//	return -1; //throw std::invalid_argument("invalid value");
-		//dst = v;
-		return 1;
-	},
-	[&](auto v) -> int
-	{
-		if constexpr (std::is_arithmetic_v<decltype(v)>)
-		{
-			dst = static_cast<double>(v);
-			return 1;
-		}
-		else
-			return -1;
-	},
-	}, src);
-}
-
-static int ConvertToDate(CellRaw& src, Cell& dst, const IngestColumnDefinition& format)
-{
-	return std::visit(overloaded{
-	[&](const std::string& s) -> int
-	{
-		if (s.empty())
-			return 0;
-		// dst.emplace<int32_t>((int)strptime(s, format.format));
-		double t;
-		if (!strptime(s, format.format, t))
-			return -1;
-		dst.emplace<int32_t>((int)t);
-		return 1;
-	},
-	[&](const CellRawDate& v) -> int
-	{
-		dst.emplace<int32_t>((int)v.d);
-		return 1;
-	},
-	[](auto v) -> int { return -1; },
-	}, src);
-}
-
-static int ConvertToTime(CellRaw& src, Cell& dst, const IngestColumnDefinition& format)
-{
-	return std::visit(overloaded{
-	[&](const std::string& s) -> int
-	{
-		if (s.empty())
-			return 0;
-		double t; // = strptime(s, format.format);
-		if (!strptime(s, format.format, t))
-			return -1;
-		dst.emplace<double>(t); // - 1462); //  - int(t) default date is 1.1.1904
-		return 1;
-	},
-	[&](const CellRawDate& v) -> int
-	{
-		dst.emplace<double>(v.d); // - std::trunc(v.d)
-		return 1;
-	},
-	[](auto v) -> int { return -1; },
-	}, src);
-}
-
-static int ConvertToDateTime(CellRaw& src, Cell& dst, const IngestColumnDefinition& format)
-{
-	return std::visit(overloaded{
-	[&](const std::string& s) -> int
-	{
-		if (s.empty())
-			return 0;
-		//dst.emplace<double>(strptime(s, format.format));
-		double t;
-		if (!strptime(s, format.format, t))
-			return -1;
-		dst.emplace<double>(t);
-		return 1;
-	},
-	[&](const CellRawDate& v) -> int
-	{
-		dst.emplace<double>(v.d);
-		return 1;
-	},
-	[](auto v) -> int { return -1; },
-	}, src);
-}
-
-static const uint8_t _base64tbl[256] = {
-	 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
-	 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
-	 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 62, 63, 62, 62, 63, // +,-./
-	52, 53, 54, 55, 56, 57, 58, 59, 60, 61,  0,  0,  0,  0,  0,  0, // 0-9
-	 0,  0,  1,  2,  3,  4,  5,  6,  7,  8,  9, 10, 11, 12, 13, 14, // a-o
-	15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,  0,  0,  0,  0, 63, // p-z _
-	 0, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, // A-O
-	41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51                      // P-Z
-};
-
-static int ConvertToBytes(CellRaw& src, Cell& dst, const IngestColumnDefinition& format)
-{
-	return std::visit(overloaded{
-	[&](const std::string& s) -> int
-	{
-		if (s.empty())
-			return 0;
-		if (format.format == "base64")
-		{
-			size_t len_full = s.size();
-			while (s[len_full - 1] == '=')
-				--len_full;
-			size_t len_tail = len_full % 4;
-			if (len_tail == 1)
-				return -1;
-			len_full -= len_tail;
-			std::string& res = dst.emplace<std::string>(len_full / 4 * 3 + (len_tail > 0 ? len_tail-1 : 0), '\0');
-			const unsigned char* src = (const unsigned char*)s.data();
-			size_t i_write = 0;
-			for (size_t i_read = 0; i_read < len_full; i_read += 4)
-			{
-				uint32_t n = _base64tbl[src[i_read]] << 18 | _base64tbl[src[i_read + 1]] << 12 | _base64tbl[src[i_read + 2]] << 6 | _base64tbl[src[i_read + 3]];
-				res[i_write++] = n >> 16;
-				res[i_write++] = (n >> 8) & 0xFF;
-				res[i_write++] = n & 0xFF;
-			}
-			if (len_tail > 0)
-			{
-				uint32_t n = _base64tbl[src[len_full]] << 18 | _base64tbl[src[len_full + 1]] << 12;
-				res[i_write++] = n >> 16;
-				if (len_tail == 3)
-				{
-					n |= _base64tbl[src[len_full + 2]] << 6;
-					res[i_write] = (n >> 8) & 0xFF;
-				}
-			}
-		}
-		else
-		{
-			if (s.size() % 2 != 0)
-				return -1;
-			size_t i_read = (s[1] == 'x' || s[1] == 'X') && s[0] == '0' ? 2 : 0;
-			std::string& res = dst.emplace<std::string>((s.size() - i_read) / 2, '\0');
-			if (!string0x_to_bytes(&s[i_read], &s[s.size()], res.data()))
-				return -1;
-		}
-		return 1;
-	},
-	[](auto v) -> int { return -1; },
-	}, src);
-}
-
 static int ConvertToNumeric(CellRaw& src, Cell& dst, const IngestColumnDefinition& format)
 {
 	return std::visit(overloaded{
@@ -580,82 +321,11 @@ static int ConvertWKTList(CellRaw& src, Cell& dst, const IngestColumnDefinition&
 	return 1;
 }
 
-static ConvertFunc _converters[] = { ConvertToString, ConvertToBool, ConvertToInteger, ConvertToDouble, ConvertToDate, ConvertToTime, ConvertToDateTime, ConvertToBytes, ConvertToNumeric, ConvertWKT };
-
-static int ConvertToList(CellRaw& src, Cell& dst, const IngestColumnDefinition& format)
-{
-	const std::string* sp = std::get_if<std::string>(&src);
-	if (!sp)
-		return -1;
-	const std::string& s = *sp;
-	if (s.empty())
-		return 0;
-	ConvertFunc converter = _converters[static_cast<size_t>(format.column_type)];
-	std::vector<Cell> values;
-
-	size_t pos, last_pos, new_pos, end_pos;
-	if (s.front() == '<' && s.back() == '>')
-	{
-		pos = 1;
-		last_pos = s.size() - 1;
-		while (pos < last_pos && std::isspace(s[pos]))
-			++pos;
-		while (pos < last_pos && std::isspace(s[last_pos - 1]))
-			--last_pos;
-		if (pos == last_pos) // empty list "<   >"
-		{
-			dst.emplace<std::vector<Cell>>(std::move(values));
-			return 1;
-		}
-	}
-	else
-	{
-		pos = 0;
-		last_pos = s.size();
-	}
-	while (true)
-	{
-		new_pos = end_pos = s.find(',', pos);
-		if (end_pos == std::string::npos)
-			end_pos = last_pos;
-		while (pos < end_pos && std::isspace(s[pos]))
-			++pos;
-		while (pos < end_pos && std::isspace(s[end_pos - 1]))
-			--end_pos;
-		CellRaw value = s.substr(pos, end_pos - pos);
-		if (converter(value, values.emplace_back(), format) != 1)
-			return -1;
-		if (new_pos == std::string::npos)
-			break;
-		pos = new_pos + 1;
-	}
-	dst.emplace<std::vector<Cell>>(std::move(values));
-	return 1;
-}
-
 bool ParserImpl::open()
 {
 	const Schema& schema = *get_schema();
 	size_t n_columns = schema.columns.size();
 	is_finished = false;
-
-//	json_columns.resize(n_columns);
-//	std::vector<XMLRoot> xml_columns(n_columns);
-//	XMLParseHandler xml_handler;
-
-/*	for (size_t i_col = 0; i_col < n_columns; ++i_col)
-	{
-		const IngestColumnDefinition& col = schema.columns[i_col];
-		if (col.is_json)
-			json_columns[i_col].reset(JSONBase::create(col, row->column_adapter(i_col)));
-//		else if (col.format == "XML")
-//			xml_columns[i_col].assign(XMLBase::create(col, row->column_adapter(i_col)));
-		else if (col.column_type == ColumnType::Geography && col.is_list)
-			converters[i_col] = ConvertWKTList;
-		else
-			converters[i_col] = col.is_list ? ConvertToList : _converters[static_cast<size_t>(col.column_type)];
-	}*/
-
 	return true;
 }
 
@@ -682,10 +352,151 @@ IngestColBase* BuildColumn(const IngestColumnDefinition &col, idx_t &cur_row) {
 	}
 }
 
+class IngestColList : public IngestColBase {
+public:
+	using IngestColBase::Write;
+
+	IngestColList(const IngestColumnDefinition &col, idx_t &cur_row)
+	    : IngestColBase(col.column_name, cur_row), buffer(nullptr), child(BuildColumn(col, list_row)) {
+	}
+	virtual void SetVector(Vector *new_vec) noexcept {
+		IngestColBase::SetVector(new_vec);
+		buffer = (VectorListBuffer *)(new_vec->GetAuxiliary().get());
+		child->SetVector(&buffer->GetChild());
+	}
+	virtual LogicalType GetType() const {
+		return LogicalType::LIST(child->GetType());
+	};
+
+	bool Write(string_t v) override {
+		string s = v.GetString();
+		size_t pos, last_pos, new_pos, end_pos;
+		if (s.front() == '<' && s.back() == '>')
+		{
+			pos = 1;
+			last_pos = s.size() - 1;
+			while (pos < last_pos && std::isspace(s[pos]))
+				++pos;
+			while (pos < last_pos && std::isspace(s[last_pos - 1]))
+				--last_pos;
+			if (pos == last_pos) // empty list "<   >"
+			{
+				Writer().SetNull();
+				return true;
+			}
+		}
+		else
+		{
+			pos = 0;
+			last_pos = s.size();
+		}
+		auto &entry = Writer().GetList();
+		entry.offset = buffer->size;
+		entry.length = 0;
+		while (true)
+		{
+			new_pos = end_pos = s.find(',', pos);
+			if (end_pos == std::string::npos)
+				end_pos = last_pos;
+			while (pos < end_pos && std::isspace(s[pos]))
+				++pos;
+			while (pos < end_pos && std::isspace(s[end_pos - 1]))
+				--end_pos;
+			string value = s.substr(pos, end_pos - pos);
+
+			if (buffer->size + 1 > buffer->capacity) {
+				buffer->GetChild().Resize(buffer->capacity, buffer->capacity * 2);
+				buffer->capacity *= 2;
+			}
+			list_row = buffer->size;
+			++buffer->size;
+			++entry.length;
+
+			if (value.empty() || !child->Write(value)) {
+				child->WriteNull();
+			}
+			if (new_pos == std::string::npos)
+				break;
+			pos = new_pos + 1;
+		}
+		return true;
+	}
+
+private:
+	VectorListBuffer *buffer;
+	std::unique_ptr<IngestColBase> child;
+	idx_t list_row;
+};
+
+class IngestColNestedJSON : public IngestColBase {
+public:
+	using IngestColBase::Write;
+
+	IngestColNestedJSON(const IngestColumnDefinition &col, idx_t &cur_row, JSONDispatcher &dispatcher)
+	    : IngestColBase(col.column_name, cur_row), dispatcher(dispatcher), handler(JSONBuildColumn(col, cur_row)) {
+	}
+
+	virtual void SetVector(Vector *new_vec) noexcept {
+		IngestColBase::SetVector(new_vec);
+		handler->column.SetVector(new_vec);
+	}
+	virtual LogicalType GetType() const {
+		return handler->column.GetType();
+	};
+
+	bool Write(string_t v) override {
+		return dispatcher.parse_string(v.GetString(), handler.get());
+	}
+
+private:
+	JSONDispatcher &dispatcher;
+	std::unique_ptr<JSONValue> handler;
+};
+
+class IngestColNestedXML : public IngestColBase {
+public:
+	using IngestColBase::Write;
+
+	IngestColNestedXML(const IngestColumnDefinition &col, idx_t &cur_row, XMLParseHandler &dispatcher)
+	    : IngestColBase(col.column_name, cur_row), dispatcher(dispatcher) {
+		handler.assign(XMLBuildColumn(col, cur_row));
+	}
+
+	virtual void SetVector(Vector *new_vec) noexcept {
+		IngestColBase::SetVector(new_vec);
+		((XMLValueBase *)handler.m_root.get())->column.SetVector(new_vec);
+	}
+	virtual LogicalType GetType() const {
+		return ((XMLValueBase *)handler.m_root.get())->column.GetType();
+	};
+
+	bool Write(string_t v) override {
+		return dispatcher.convert_cell(v, &handler);
+	}
+
+private:
+	XMLParseHandler &dispatcher;
+	XMLRoot handler;
+};
+
 void ParserImpl::BuildColumns() {
 	Schema *schema = get_schema();
+	IngestColBase* column;
 	for (const auto &col : schema->columns) {
-		m_columns.push_back(std::unique_ptr<IngestColBase>(BuildColumn(col, cur_row)));
+		if (col.is_json) {
+			column = new IngestColNestedJSON(col, cur_row, json_dispatcher);
+		} else if (col.format == "XML") {
+			column = new IngestColNestedXML(col, cur_row, xml_handler);
+		}
+		//else if (col.column_type == ColumnType::Geography && col.is_list)
+		//	converters[i_col] = ConvertWKTList;
+		//else
+		else if (col.is_list) {
+			column = new IngestColList(col, cur_row);
+		} else {
+			column = BuildColumn(col, cur_row);
+		}
+		m_columns.push_back(std::unique_ptr<IngestColBase>(column));
 	}
 }
 
@@ -733,23 +544,7 @@ idx_t ParserImpl::FillChunk(DataChunk &output) {
 				if (!res) {
 					cnv.WriteNull();
 				}
-				/*if (col.is_json)
-				{
-					const std::string* sp = std::get_if<std::string>(&cell);
-					if (!sp || !sp->empty() && !js_dispatcher.parse_string(*sp, json_columns[i_col].get())) {
-					//	row->update_error(i_col, { ErrorCode::TypeError, ConvertRawToString(cell) });
-						writer.SetNull();
-					}
-				}
-				else // XML
-				{
-					//if (!xml_handler.convert_cell(cell, &xml_columns[i_col]))
-					//	row->update_error(i_col, { ErrorCode::TypeError, ConvertRawToString(cell) });
-					//writer.SetNull(i_col);
-				}*/
-			}
-			else // if (col.index == COL_ROWNUM)
-			{
+			} else {// if (col.index == COL_ROWNUM)
 				cnv.Write(row_number);
 			}
 		}
@@ -826,7 +621,7 @@ int TType<ColumnType::Boolean>::infer(const CellRaw& cell)
 	if (!m_valid)
 		return 0;
 	return m_valid = std::visit(overloaded{
-	[](const std::string& s) -> bool { return _bool_dict.find(s) != _bool_dict.end(); },
+	[](const std::string& s) -> bool { return bool_dict.find(s) != bool_dict.end(); },
 	[](bool v) -> bool { return true; },
 	[](int64_t v) -> bool { return v == 0 || v == 1; },
 	[](auto v) -> bool { return false; },

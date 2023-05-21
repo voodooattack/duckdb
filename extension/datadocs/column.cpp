@@ -74,13 +74,6 @@ bool IngestColVARCHAR::WriteExcelDate(double v) {
 	return true;
 }
 
-static inline const std::unordered_map<string, bool> bool_dict {
-	{"0", false}, {"1", true},
-	{"false", false}, {"False", false}, {"FALSE", false}, {"true", true}, {"True", true}, {"TRUE", true},
-	{"n", false}, {"N", false}, {"no", false}, {"No", false}, {"NO", false},
-	{"y", true}, {"Y", true}, {"yes", true}, {"Yes", true}, {"YES", true}
-};
-
 bool IngestColBOOLEAN::Write(string_t v) {
 	auto it = bool_dict.find(string(v));
 	if (it == bool_dict.end())

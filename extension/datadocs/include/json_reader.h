@@ -57,6 +57,8 @@ protected:
 	}
 };
 
+JSONValue *JSONBuildColumn(const IngestColumnDefinition &col, idx_t &cur_row);
+
 class JSONTopListStruct : public JSONHandler {
 public:
 	JSONTopListStruct() : col_row_number("__rownum__", cur_row) {}

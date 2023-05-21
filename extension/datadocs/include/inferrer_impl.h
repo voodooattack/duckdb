@@ -3,9 +3,10 @@
 
 #include <memory>
 
+#include "json.h"
+#include "xml.h"
 #include "column.hpp"
 #include "inferrer.h"
-#include "json.h"
 
 namespace duckdb {
 
@@ -20,9 +21,6 @@ typedef std::vector<CellRaw> RowRaw;
 
 class Column;
 class BaseReader;
-typedef int (*ConvertFunc)(CellRaw& src, Cell& dst, const IngestColumnDefinition& format);
-
-class IngestColTable;
 
 IngestColBase* BuildColumn(const IngestColumnDefinition &col, idx_t &cur_row);
 
@@ -57,6 +55,8 @@ protected:
 
 	vector<std::unique_ptr<IngestColBase>> m_columns;
 	idx_t cur_row;
+	JSONDispatcher json_dispatcher;
+	XMLParseHandler xml_handler;
 };
 
 }
