@@ -640,7 +640,7 @@ JSONValue *JSONBuildColumn(const IngestColumnDefinition &col, idx_t &cur_row, bo
 			return new JSONCol<IngestColBLOBBase64>(col.column_name, cur_row);
 		}
 		return new JSONCol<IngestColBLOBHex>(col.column_name, cur_row);
-	case ColumnType::Numeric: return new JSONCol<IngestColNUMERIC>(col.column_name, cur_row);
+	case ColumnType::Numeric: return new JSONCol<IngestColNUMERIC>(col.column_name, cur_row, col.i_digits, col.f_digits);
 	case ColumnType::Geography: return new JSONCol<IngestColGEO>(col.column_name, cur_row);
 	case ColumnType::Struct: return new JSONStruct(col, cur_row);
 	case ColumnType::Variant: return new IngestColJSONVariant(col.column_name, cur_row);

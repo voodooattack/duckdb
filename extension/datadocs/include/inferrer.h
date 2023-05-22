@@ -83,6 +83,8 @@ struct IngestColumnDefinition
 	double bytes_per_value; // estimate for strings
 	bool is_json;
 	int dest_index; // for nested Struct columns this is output column
+	uint8_t i_digits;
+	uint8_t f_digits;
 	std::vector<IngestColumnDefinition> fields; // nested columns for Struct type
 };
 

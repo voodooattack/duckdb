@@ -178,7 +178,22 @@ public:
 
 class IngestColNUMERIC : public IngestColBase {
 public:
-	using IngestColBase::IngestColBase, IngestColBase::Write;
+	using IngestColBase::Write;
+
+	IngestColNUMERIC(string name, idx_t &cur_row, uint8_t i_digits, uint8_t f_digits) noexcept;
+
+	LogicalType GetType() const override {
+		return LogicalType::DECIMAL(width, scale);
+	};
+	bool Write(string_t v) override;
+	bool Write(int64_t v) override;
+	bool Write(bool v) override;
+	bool Write(double v) override;
+
+private:
+	uint8_t storage_type;
+	uint8_t width;
+	uint8_t scale;
 };
 
 class IngestColGEO : public IngestColBase {

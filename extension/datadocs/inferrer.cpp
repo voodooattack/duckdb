@@ -256,29 +256,6 @@ static std::string ConvertRawToString(CellRaw& src)
 	return std::move(std::get<std::string>(tmp));
 }
 
-static int ConvertToNumeric(CellRaw& src, Cell& dst, const IngestColumnDefinition& format)
-{
-	return std::visit(overloaded{
-	[&](const std::string& s) -> int
-	{
-		if (s.empty())
-			return 0;
-		std::string& res = dst.emplace<std::string>();
-		return string_to_decimal(s.data(), s.data() + s.size(), res) ? 1 : -1;
-	},
-	[&](auto v) -> int
-	{
-		if constexpr (std::is_arithmetic_v<decltype(v)>)
-		{
-			dst = static_cast<double>(v);
-			return 1;
-		}
-		else
-			return -1;
-	},
-	}, src);
-}
-
 static int ConvertWKT(CellRaw& src, Cell& dst, const IngestColumnDefinition& format)
 {
 	const std::string* sp = std::get_if<std::string>(&src);
@@ -343,7 +320,7 @@ IngestColBase* BuildColumn(const IngestColumnDefinition &col, idx_t &cur_row) {
 			return new IngestColBLOBBase64(col.column_name, cur_row);
 		}
 		return new IngestColBLOBHex(col.column_name, cur_row);
-	case ColumnType::Numeric: return new IngestColNUMERIC(col.column_name, cur_row);
+	case ColumnType::Numeric: return new IngestColNUMERIC(col.column_name, cur_row, col.i_digits, col.f_digits);
 	case ColumnType::Geography: return new IngestColGEO(col.column_name, cur_row);
 	default:
 		D_ASSERT(false);
@@ -657,6 +634,12 @@ public:
 				return false;
 			if (m.length(1) > 18)
 				m_type = ColumnType::Numeric;
+			if (m_type == ColumnType::Numeric) {
+				if (!string_to_decimal(s.data(), &s[s.size()], buffer))
+					return false;
+				m_idigits = std::max(m_idigits, (uint8_t)buffer[0]);
+				m_fdigits = std::max(m_fdigits, (uint8_t)buffer[1]);
+			}
 			return true;
 		},
 		[](auto v) -> bool { return std::is_arithmetic_v<decltype(v)>; },
@@ -665,13 +648,19 @@ public:
 
 	bool create_schema(IngestColumnDefinition& col) const
 	{
-		if (m_valid)
+		if (m_valid) {
 			col.column_type = m_type;
+			col.i_digits = m_idigits;
+			col.f_digits = m_fdigits;
+		}
 		return m_valid;
 	}
 
 	bool m_valid = true;
 	ColumnType m_type = ColumnType::Decimal;
+	uint8_t m_idigits = 0;
+	uint8_t m_fdigits = 0;
+	string buffer;
 };
 
 static const std::unordered_map<std::string, char> _dt_tokens {

@@ -377,7 +377,7 @@ XMLValueBase *XMLBuildColumn(const IngestColumnDefinition &col, idx_t &cur_row) 
 			return new XMLCol<IngestColBLOBBase64>(col.column_name, cur_row);
 		}
 		return new XMLCol<IngestColBLOBHex>(col.column_name, cur_row);
-	case ColumnType::Numeric: return new XMLCol<IngestColNUMERIC>(col.column_name, cur_row);
+	case ColumnType::Numeric: return new XMLCol<IngestColNUMERIC>(col.column_name, cur_row, col.i_digits, col.f_digits);
 	case ColumnType::Geography: return new XMLCol<IngestColGEO>(col.column_name, cur_row);
 	case ColumnType::Struct: return new XMLStruct(col, cur_row);
 	default:

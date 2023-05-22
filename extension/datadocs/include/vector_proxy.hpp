@@ -105,6 +105,12 @@ public:
 		FlatVector::GetData<T>(vec)[i_row] = v;
 	}
 
+	template <typename T>
+	T &Get() noexcept {
+		D_ASSERT(vec.GetType().InternalType() == GetTypeId<T>());
+		return FlatVector::GetData<T>(vec)[i_row];
+	}
+
 protected:
 	Vector &vec;
 	idx_t i_row;

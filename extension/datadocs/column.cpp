@@ -3,7 +3,7 @@
 
 #include "duckdb/common/types/blob.hpp"
 #include "duckdb/common/types/cast_helpers.hpp"
-#include "duckdb/common/operator/cast_operators.hpp"
+#include "duckdb/common/operator/decimal_cast_operators.hpp"
 #include "duckdb/common/operator/string_cast.hpp"
 
 #include "column.hpp"
@@ -245,6 +245,62 @@ bool IngestColBLOBHex::Write(string_t v) {
 	if (!string0x_to_bytes(s+i_read, s+size, res))
 		return false;
 	return true;
+}
+
+IngestColNUMERIC::IngestColNUMERIC(string name, idx_t &cur_row, uint8_t i_digits, uint8_t f_digits) noexcept
+    : IngestColBase(std::move(name), cur_row) {
+	int need_width = i_digits + f_digits;
+	if (need_width <= Decimal::MAX_WIDTH_INT16) {
+		width = Decimal::MAX_WIDTH_INT16;
+		storage_type = 0;
+	} else if (need_width <= Decimal::MAX_WIDTH_INT32) {
+		width = Decimal::MAX_WIDTH_INT32;
+		storage_type = 1;
+	} else if (need_width <= Decimal::MAX_WIDTH_INT64) {
+		width = Decimal::MAX_WIDTH_INT64;
+		storage_type = 2;
+	} else {
+		width = Decimal::MAX_WIDTH_DECIMAL;
+		storage_type = 3;
+		if (need_width > Decimal::MAX_WIDTH_DECIMAL) {
+			f_digits = MaxValue(0, Decimal::MAX_WIDTH_DECIMAL - i_digits);
+		}
+	}
+	scale = f_digits;
+}
+
+bool IngestColNUMERIC::Write(string_t v) {
+	string message;
+	switch (storage_type) {
+	case 0: return TryCastToDecimal::Operation(v, Writer().Get<int16_t>(), &message, width, scale);
+	case 1: return TryCastToDecimal::Operation(v, Writer().Get<int32_t>(), &message, width, scale);
+	case 2: return TryCastToDecimal::Operation(v, Writer().Get<int64_t>(), &message, width, scale);
+	default: return TryCastToDecimal::Operation(v, Writer().Get<hugeint_t>(), &message, width, scale);
+	}
+}
+
+bool IngestColNUMERIC::Write(int64_t v) {
+	string message;
+	switch (storage_type) {
+	case 0: return TryCastToDecimal::Operation(v, Writer().Get<int16_t>(), &message, width, scale);
+	case 1: return TryCastToDecimal::Operation(v, Writer().Get<int32_t>(), &message, width, scale);
+	case 2: return TryCastToDecimal::Operation(v, Writer().Get<int64_t>(), &message, width, scale);
+	default: return TryCastToDecimal::Operation(v, Writer().Get<hugeint_t>(), &message, width, scale);
+	}
+}
+
+bool IngestColNUMERIC::Write(bool v) {
+	return Write((int64_t)v);
+}
+
+bool IngestColNUMERIC::Write(double v) {
+	string message;
+	switch (storage_type) {
+	case 0: return TryCastToDecimal::Operation(v, Writer().Get<int16_t>(), &message, width, scale);
+	case 1: return TryCastToDecimal::Operation(v, Writer().Get<int32_t>(), &message, width, scale);
+	case 2: return TryCastToDecimal::Operation(v, Writer().Get<int64_t>(), &message, width, scale);
+	default: return TryCastToDecimal::Operation(v, Writer().Get<hugeint_t>(), &message, width, scale);
+	}
 }
 
 } // namespace duckdb
