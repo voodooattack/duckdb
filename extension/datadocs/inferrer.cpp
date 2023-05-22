@@ -256,48 +256,6 @@ static std::string ConvertRawToString(CellRaw& src)
 	return std::move(std::get<std::string>(tmp));
 }
 
-static int ConvertWKT(CellRaw& src, Cell& dst, const IngestColumnDefinition& format)
-{
-	const std::string* sp = std::get_if<std::string>(&src);
-	if (!sp)
-		return -1;
-	if (sp->empty())
-		return 0;
-	std::string& res = dst.emplace<std::string>();
-	const char* begin = sp->data();
-	const char* end = begin + sp->size();
-	return wkt_to_bytes(begin, end, res) && begin == end ? 1 : -1;
-}
-
-static int ConvertWKTList(CellRaw& src, Cell& dst, const IngestColumnDefinition& format)
-{
-	const std::string* sp = std::get_if<std::string>(&src);
-	if (!sp)
-		return -1;
-	if (sp->empty())
-		return 0;
-	const char* begin = sp->data();
-	const char* end = begin + sp->size();
-	if (*begin == '<')
-	{
-		if (*--end != '>')
-			return -1;
-		while (std::isspace(*++begin));
-	}
-	std::vector<Cell> values;
-	while (begin < end)
-	{
-		if (!wkt_to_bytes(begin, end, std::get<std::string>(values.emplace_back(std::in_place_type<std::string>))))
-			return -1;
-		while (std::isspace(*begin) || *begin == ',')
-			++begin;
-	}
-	if (begin != end)
-		return -1;
-	dst.emplace<std::vector<Cell>>(std::move(values));
-	return 1;
-}
-
 bool ParserImpl::open()
 {
 	const Schema& schema = *get_schema();
@@ -404,6 +362,54 @@ private:
 	idx_t list_row;
 };
 
+class IngestColWKTList : public IngestColBase {
+public:
+	using IngestColBase::Write;
+
+	IngestColWKTList(const IngestColumnDefinition &col, idx_t &cur_row)
+	    : IngestColBase(col.column_name, cur_row), buffer(nullptr), child(col.column_name, list_row) {
+	}
+	virtual void SetVector(Vector *new_vec) noexcept {
+		IngestColBase::SetVector(new_vec);
+		buffer = (VectorListBuffer *)(new_vec->GetAuxiliary().get());
+		child.SetVector(&buffer->GetChild());
+	}
+	virtual LogicalType GetType() const {
+		return LogicalType::LIST(child.GetType());
+	};
+
+	bool Write(string_t v) override {
+		const char* begin = v.GetDataUnsafe();
+		const char* end = begin + v.GetSize();
+		if (*begin == '<')
+		{
+			if (*--end != '>')
+				return false;
+			while (std::isspace(*++begin));
+		}
+		vector<string> values;
+		while (begin < end)
+		{
+			if (!wkt_to_bytes(begin, end, values.emplace_back()))
+				return false;
+			while (std::isspace(*begin) || *begin == ',')
+				++begin;
+		}
+		if (begin != end)
+			return false;
+		VectorListWriter writer = Writer().SetList();
+		for (const auto &s : values) {
+			writer.Append().SetString(s);
+		}
+		return true;
+	}
+
+private:
+	VectorListBuffer *buffer;
+	IngestColGEO child;
+	idx_t list_row;
+};
+
 class IngestColNestedJSON : public IngestColBase {
 public:
 	using IngestColBase::Write;
@@ -464,11 +470,12 @@ void ParserImpl::BuildColumns() {
 		} else if (col.format == "XML") {
 			column = new IngestColNestedXML(col, cur_row, xml_handler);
 		}
-		//else if (col.column_type == ColumnType::Geography && col.is_list)
-		//	converters[i_col] = ConvertWKTList;
-		//else
 		else if (col.is_list) {
-			column = new IngestColList(col, cur_row);
+			if (col.column_type == ColumnType::Geography) {
+				column = new IngestColWKTList(col, cur_row);
+			} else {
+				column = new IngestColList(col, cur_row);
+			}
 		} else {
 			column = BuildColumn(col, cur_row);
 		}

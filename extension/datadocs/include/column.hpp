@@ -4,6 +4,7 @@
 
 #include "duckdb.hpp"
 
+#include "datadocs.hpp"
 #include "vector_proxy.hpp"
 
 namespace duckdb {
@@ -199,6 +200,11 @@ private:
 class IngestColGEO : public IngestColBase {
 public:
 	using IngestColBase::IngestColBase, IngestColBase::Write;
+
+	LogicalType GetType() const override {
+		return DDGeoType;
+	};
+	bool Write(string_t v) override;
 };
 
 struct IngestColChildrenMap {

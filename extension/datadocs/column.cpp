@@ -10,6 +10,7 @@
 #include "utility.h"
 #include "type_conv.h"
 #include "vector_proxy.hpp"
+#include "wkt.h"
 
 namespace duckdb {
 
@@ -301,6 +302,17 @@ bool IngestColNUMERIC::Write(double v) {
 	case 2: return TryCastToDecimal::Operation(v, Writer().Get<int64_t>(), &message, width, scale);
 	default: return TryCastToDecimal::Operation(v, Writer().Get<hugeint_t>(), &message, width, scale);
 	}
+}
+
+bool IngestColGEO::Write(string_t v) {
+	string res;
+	const char* begin = v.GetDataUnsafe();
+	const char* end = begin + v.GetSize();
+	if (!(wkt_to_bytes(begin, end, res) && begin == end)) {
+		return false;
+	}
+	Writer().SetString(res);
+	return true;
 }
 
 } // namespace duckdb

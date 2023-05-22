@@ -216,19 +216,12 @@ private:
 	JSONList child;
 };
 
-/*
-class JSONGeoStruct : public JSONHandler
-{
+class IngestColJSONGeo : public JSONValue, public IngestColGEO {
 public:
-	JSONGeoStruct(Row::ColumnAdapter* adapter) :
-		m_adapter(adapter),
-		m_cell(std::in_place_type<std::string>),
-		m_data(std::get<std::string>(m_cell)),
-		m_type(m_data),
-		m_coord(m_data),
-		m_collection(*this)
-	{}
-	virtual ~JSONGeoStruct() = default;
+	IngestColJSONGeo(string name, idx_t &cur_row)
+	    : JSONValue(this), IngestColGEO(name, cur_row), m_type(m_data), m_coord(m_data), m_collection(*this) {
+	}
+
 	virtual bool StartObject(JSONDispatcher* dispatcher) override
 	{
 		dispatcher->push(this);
@@ -275,8 +268,11 @@ public:
 		int res = finalize();
 		if (res < 0)
 			return false;
-		if (res > 0)
-			m_adapter->set_value(m_cell);
+		if (res == 0) {
+			Writer().SetNull();
+		} else {
+			Writer().SetString(m_data);
+		}
 		return true;
 	}
 	void initialize()
@@ -440,7 +436,7 @@ protected:
 	class JSONGeoStructCollection : public JSONHandler
 	{
 	public:
-		JSONGeoStructCollection(JSONGeoStruct& geo) : m_item(geo) {}
+		JSONGeoStructCollection(IngestColJSONGeo& geo) : m_item(geo) {}
 		virtual ~JSONGeoStructCollection() = default;
 		virtual bool StartArray(JSONDispatcher* dispatcher) override
 		{
@@ -459,7 +455,7 @@ protected:
 		class JSONGeoStructCollectionItem : public JSONHandler
 		{
 		public:
-			JSONGeoStructCollectionItem(JSONGeoStruct& geo) : m_geo(geo) {}
+			JSONGeoStructCollectionItem(IngestColJSONGeo& geo) : m_geo(geo) {}
 			virtual ~JSONGeoStructCollectionItem() = default;
 			virtual bool StartObject(JSONDispatcher* dispatcher) override
 			{
@@ -479,64 +475,19 @@ protected:
 				return true;
 			}
 
-			JSONGeoStruct& m_geo;
+			IngestColJSONGeo& m_geo;
 		};
 
 		JSONGeoStructCollectionItem m_item;
 	};
 
-	Row::ColumnAdapter* m_adapter;
-	Cell m_cell;
-	std::string& m_data;
+	std::string m_data;
 	int m_data_kind; // 1 - coordinates, 2 - geometries
 	JSONGeoType m_type;
 	JSONGeoCoord m_coord;
 	JSONGeoStructCollection m_collection;
 	std::vector<char*> m_insert_pos;
 };
-
-class JSONListGeoStruct : public JSONGeoStruct
-{
-public:
-	using JSONGeoStruct::JSONGeoStruct;
-	virtual bool StartObject(JSONDispatcher* dispatcher) override { DoStartObject(); return true; }
-	virtual bool EndObject(JSONDispatcher* dispatcher) override { return DoEndObject(); }
-	void init_list_value(JSONDispatcher* dispatcher)
-	{
-		m_adapter->set_notnull();
-		dispatcher->push(this);
-		dispatcher->m_value = this;
-	}
-};
-
-*/
-
-//JSONValue* JSONValue::create(IngestColBase &col)
-//{
-	//switch(col.column_type)
-	//{
-	//case ColumnType::Struct:
-	//	if (col.is_list)
-	//		return new JSONListWrapper<JSONListStruct>(i_col, col.fields);
-	//	else
-	//		return new JSONStruct(i_col, col.fields);
-	//case ColumnType::Geography:
-	//	if (col.is_list)
-	//		return new JSONListWrapper<JSONListGeoStruct>(i_col);
-	//	else
-	//		return new JSONGeoStruct(i_col);
-	//case ColumnType::Variant:
-	//	if (col.is_list)
-	//		return new JSONListWrapper<JSONVariant>(i_col);
-	//	else
-	//		return new JSONVariant(i_col);
-	//default:
-		//if (col.is_list)
-		//	return new JSONListWrapper<JSONList>(i_col, col);
-		//else
-		//	return nullptr;//new JSONValue();
-	//}
-//}
 
 class IngestColJSONVariant : public JSONValue, public IngestColVARCHAR {
 public:
@@ -641,7 +592,7 @@ JSONValue *JSONBuildColumn(const IngestColumnDefinition &col, idx_t &cur_row, bo
 		}
 		return new JSONCol<IngestColBLOBHex>(col.column_name, cur_row);
 	case ColumnType::Numeric: return new JSONCol<IngestColNUMERIC>(col.column_name, cur_row, col.i_digits, col.f_digits);
-	case ColumnType::Geography: return new JSONCol<IngestColGEO>(col.column_name, cur_row);
+	case ColumnType::Geography: return new IngestColJSONGeo(col.column_name, cur_row);
 	case ColumnType::Struct: return new JSONStruct(col, cur_row);
 	case ColumnType::Variant: return new IngestColJSONVariant(col.column_name, cur_row);
 	default:
