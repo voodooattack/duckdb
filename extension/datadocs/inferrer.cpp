@@ -345,7 +345,6 @@ IngestColBase* BuildColumn(const IngestColumnDefinition &col, idx_t &cur_row) {
 		return new IngestColBLOBHex(col.column_name, cur_row);
 	case ColumnType::Numeric: return new IngestColNUMERIC(col.column_name, cur_row);
 	case ColumnType::Geography: return new IngestColGEO(col.column_name, cur_row);
-	case ColumnType::Variant: return new IngestColVARIANT(col.column_name, cur_row);
 	default:
 		D_ASSERT(false);
 		return new IngestColBase(col.column_name, cur_row);

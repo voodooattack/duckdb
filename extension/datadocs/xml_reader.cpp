@@ -380,7 +380,6 @@ XMLValueBase *XMLBuildColumn(const IngestColumnDefinition &col, idx_t &cur_row) 
 	case ColumnType::Numeric: return new XMLCol<IngestColNUMERIC>(col.column_name, cur_row);
 	case ColumnType::Geography: return new XMLCol<IngestColGEO>(col.column_name, cur_row);
 	case ColumnType::Struct: return new XMLStruct(col, cur_row);
-	case ColumnType::Variant: return new XMLCol<IngestColVARIANT>(col.column_name, cur_row);
 	default:
 		D_ASSERT(false);
 		return new XMLCol<IngestColBase>(col.column_name, cur_row);

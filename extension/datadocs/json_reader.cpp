@@ -1,5 +1,9 @@
 #include <string_view>
 
+#include "rapidjson/writer.h"
+#include "rapidjson/stringbuffer.h"
+
+#include "datadocs.hpp"
 #include "json_reader.h"
 #include "utility.h"
 
@@ -128,82 +132,34 @@ public:
 class JSONList : public JSONHandler
 {
 public:
-	JSONList(const IngestColumnDefinition &col) : buffer(nullptr), column(BuildColumn(col, cur_row)) {
+	JSONList(const IngestColumnDefinition &col) : buffer(nullptr), child(JSONBuildColumn(col, cur_row, true)) {
 	}
 
-	virtual bool Null() { Append(); column->WriteNull(); return true; }
-	virtual bool Bool(bool b) override { return new_value(b); }
-	virtual bool Int(int i) override { return new_value((int64_t)i); }
-	virtual bool Uint(unsigned i) override { return new_value((int64_t)i); }
-	virtual bool Int64(int64_t i) override { return new_value(i); }
-	virtual bool Uint64(uint64_t i) override { return new_value(int64_t(i < INT64_MAX ? i : INT64_MAX)); }
-	virtual bool Double(double d) override { return new_value(d); }
-	virtual bool String(const char* s, int length, bool copy) override { return new_value(string_t(s, length)); }
-
-	void SetVector(Vector *new_vec) noexcept {
-		buffer = (VectorListBuffer *)(new_vec->GetAuxiliary().get());
-		column->SetVector(&buffer->GetChild());
-	}
-	LogicalType GetType() const {
-		return column->GetType();
-	}
-	void Init(list_entry_t &entry) {
-		entry.offset = buffer->size;
-		entry.length = 0;
-		length = &entry.length;
-	}
-
-protected:
-	void Append() {
-		if (buffer->size + 1 > buffer->capacity) {
-			buffer->GetChild().Resize(buffer->capacity, buffer->capacity * 2);
-			buffer->capacity *= 2;
-		}
-		cur_row = buffer->size;
-		++buffer->size;
-		++(*length);
-	}
-
-	template <typename T>
-	bool new_value(T value) {
-		Append();
-		if (!column->Write(value))
-			column->WriteNull();
-		return true;
-	}
-private:
-	VectorListBuffer *buffer;
-	std::unique_ptr<IngestColBase> column;
-	idx_t cur_row;
-	uint64_t *length;
-};
-
-class JSONListStruct : public JSONHandler
-{
-public:
-	JSONListStruct(const IngestColumnDefinition &col) :  buffer(nullptr), column(col, cur_row) {
-	}
-
-	virtual bool Null() { Append(); column.WriteNull(); return true; }
-	virtual bool Bool(bool b) override { return new_value(b); }
-	virtual bool Int(int i) override { return new_value((int64_t)i); }
-	virtual bool Uint(unsigned i) override { return new_value((int64_t)i); }
-	virtual bool Int64(int64_t i) override { return new_value(i); }
-	virtual bool Uint64(uint64_t i) override { return new_value(int64_t(i < INT64_MAX ? i : INT64_MAX)); }
-	virtual bool Double(double d) override { return new_value(d); }
-	virtual bool String(const char* s, int length, bool copy) override { return new_value(string_t(s, length)); }
+	virtual bool Null() { Append();  return child->Null(); }
+	virtual bool Bool(bool b) override { Append(); return child->Bool(b); }
+	virtual bool Int(int i) override { Append(); return child->Int(i); }
+	virtual bool Uint(unsigned i) override { Append(); return child->Uint(i); }
+	virtual bool Int64(int64_t i) override { Append(); return child->Int64(i); }
+	virtual bool Uint64(uint64_t i) override { Append(); return child->Uint64(i); }
+	virtual bool Double(double d) override { Append(); return child->Double(d); }
+	virtual bool String(const char* s, int length, bool copy) override { Append(); return child->String(s, length, copy); }
 	virtual bool StartObject(JSONDispatcher* dispatcher) override
 	{
 		Append();
-		return column.StartObject(dispatcher);
+		return child->StartObject(dispatcher);
+	}
+	virtual bool StartArray(JSONDispatcher* dispatcher) override
+	{
+		Append();
+		return child->StartArray(dispatcher);
 	}
 
 	void SetVector(Vector *new_vec) noexcept {
 		buffer = (VectorListBuffer *)(new_vec->GetAuxiliary().get());
-		column.SetVector(&buffer->GetChild());
+		child->column.SetVector(&buffer->GetChild());
 	}
 	LogicalType GetType() const {
-		return column.GetType();
+		return child->column.GetType();
 	}
 	void Init(list_entry_t &entry) {
 		entry.offset = buffer->size;
@@ -222,21 +178,20 @@ protected:
 		++(*length);
 	}
 
-	template <typename T>
-	bool new_value(T value) {
-		Append();
-		if (!column.Write(value))
-			column.WriteNull();
-		return true;
-	}
+	//template <typename T>
+	//bool new_value(T value) {
+	//	Append();
+	//	if (!child->column.Write(value))
+	//		child->column.WriteNull();
+	//	return true;
+	//}
 private:
 	VectorListBuffer *buffer;
-	JSONStruct column;
+	std::unique_ptr<JSONValue> child;
 	idx_t cur_row;
 	uint64_t *length;
 };
 
-template <class T>
 class JSONListWrapper : public JSONValue, public IngestColBase {
 public:
 	JSONListWrapper(const IngestColumnDefinition &col, idx_t &cur_row)
@@ -258,7 +213,7 @@ public:
 	};
 
 private:
-	T child;
+	JSONList child;
 };
 
 /*
@@ -554,103 +509,6 @@ public:
 	}
 };
 
-class JSONVariant : public JSONHandler, public Row::ColumnAdapter
-{
-public:
-	JSONVariant(Row::ColumnAdapter* adapter) :
-		m_adapter(adapter),
-		m_cell(std::in_place_type<VariantCell>),
-		m_var(std::get<VariantCell>(m_cell))
-	{}
-	virtual bool Null() override { m_var.assign<VariantCell::Null>(0); m_adapter->set_value(m_cell); return true; }
-	virtual bool Bool(bool b) override { m_var.assign<VariantCell::Boolean>(b); m_adapter->set_value(m_cell); return true; }
-	virtual bool Int (int i) override { m_var.assign<VariantCell::Integer>(i); m_adapter->set_value(m_cell); return true; }
-	virtual bool Uint(unsigned i) override { m_var.assign<VariantCell::Unsigned>(i); m_adapter->set_value(m_cell); return true; }
-	virtual bool Int64(int64_t i) override { m_var.assign<VariantCell::Integer64>(i); m_adapter->set_value(m_cell); return true; }
-	virtual bool Uint64(uint64_t i) override { m_var.assign<VariantCell::Unsigned64>(i); m_adapter->set_value(m_cell); return true; }
-	virtual bool Double(double d) override { m_var.assign<VariantCell::Float>(d); m_adapter->set_value(m_cell); return true; }
-	virtual bool String(const char* s, int length, bool copy) override
-	{
-		string_to_variant(s, length, m_var);
-		m_adapter->set_value(m_cell);
-		return true;
-	}
-
-	virtual bool StartArray(JSONDispatcher* dispatcher) override { return StartObject(dispatcher); }
-	virtual bool EndArray(JSONDispatcher* dispatcher) override { finalize(dispatcher, VariantCell::List); return true; }
-	virtual bool StartObject(JSONDispatcher* dispatcher) override
-	{
-		if (!m_nested)
-			m_nested.reset(new JSONVariant(this));
-		dispatcher->push(this);
-		dispatcher->m_value = m_nested.get();
-		m_keys.clear();
-		m_values.clear();
-		return true;
-	}
-	virtual bool Key(const char* s, int length, bool copy, JSONDispatcher* dispatcher) override
-	{
-		m_keys.emplace_back(s, length);
-		return true;
-	}
-	virtual bool EndObject(JSONDispatcher* dispatcher) override { finalize(dispatcher, VariantCell::Struct); return true; }
-
-	virtual ColumnAdapter* column_adapter(size_t i_col) { return nullptr; };
-	virtual void append(bool not_null) {};
-	virtual void set_notnull() {};
-	virtual void set_value(Cell& value)
-	{
-		m_values.push_back(std::move(m_nested->m_var));
-	};
-
-	void init_list_value(JSONDispatcher* dispatcher)
-	{
-		m_adapter->set_notnull();
-		dispatcher->push(dispatcher->m_value);
-		dispatcher->m_value = this;
-	}
-	
-private:
-	void finalize(JSONDispatcher* dispatcher, VariantCell::VariantTypeId type)
-	{
-		m_var.type = type;
-		size_t size = (2 + m_keys.size()) * sizeof(unsigned) + m_values.size() * (sizeof(unsigned) + sizeof(uint8_t));
-		size_t data_start = size;
-		for (const std::string& s : m_keys)
-			size += s.size();
-		for (const VariantCell& cell : m_values)
-			size += cell.data.size();
-		std::string& data = m_var.data;
-		data.reserve(size);
-		data.resize(data_start);
-		unsigned* pu = (unsigned*)data.data();
-		*pu++ = (unsigned)m_values.size();
-		*pu++ = (unsigned)data_start;
-		for (const std::string& s : m_keys)
-		{
-			data.append(s);
-			*pu++ = (unsigned)data.size();
-		}
-		for (const VariantCell& cell : m_values)
-		{
-			data.append(cell.data);
-			*pu++ = (unsigned)data.size();
-		}
-		uint8_t* pc = (uint8_t*)pu;
-		for (const VariantCell& cell : m_values)
-			*pc++ = (uint8_t)cell.type;
-		m_adapter->set_value(m_cell);
-		dispatcher->pop();
-		dispatcher->m_value = this;
-	}
-
-	Row::ColumnAdapter* m_adapter;
-	Cell m_cell;
-	VariantCell& m_var;
-	std::unique_ptr<JSONVariant> m_nested;
-	std::vector<std::string> m_keys;
-	std::vector<VariantCell> m_values;
-};
 */
 
 //JSONValue* JSONValue::create(IngestColBase &col)
@@ -680,12 +538,94 @@ private:
 	//}
 //}
 
-JSONValue *JSONBuildColumn(const IngestColumnDefinition &col, idx_t &cur_row) {
-	if (col.is_list) {
-		if (col.column_type == ColumnType::Struct) {
-			return new JSONListWrapper<JSONListStruct>(col, cur_row);
+class IngestColJSONVariant : public JSONValue, public IngestColVARCHAR {
+public:
+	IngestColJSONVariant(string name, idx_t &cur_row) : JSONValue(this), IngestColVARCHAR(name, cur_row), impl(this) {
+	}
+
+	LogicalType GetType() const override {
+		return DDJsonType;
+	};
+
+	virtual bool Null() override { WriteNull(); return true; }
+	virtual bool Bool(bool b) override { impl.Init(); impl.Bool(b); impl.Finalize(); return true; }
+	virtual bool Int(int i) override { impl.Init(); impl.Int(i); impl.Finalize(); return true; }
+	virtual bool Uint(unsigned i) override { impl.Init(); impl.Uint(i); impl.Finalize(); return true; }
+	virtual bool Int64(int64_t i) override { impl.Init(); impl.Int64(i); impl.Finalize(); return true; }
+	virtual bool Uint64(uint64_t i) override { impl.Init(); impl.Uint64(i); impl.Finalize(); return true; }
+	virtual bool Double(double d) override { impl.Init(); impl.Double(d); impl.Finalize(); return true; }
+	virtual bool String(const char* s, int length, bool copy) override { impl.Init(); impl.String(s, length, copy); impl.Finalize(); return true; }
+	virtual bool StartObject(JSONDispatcher* dispatcher) override {
+		dispatcher->push(&impl);
+		dispatcher->m_value = &impl;
+		impl.Init();
+		return impl.StartObject(dispatcher);
+	}
+	virtual bool StartArray(JSONDispatcher* dispatcher) override {
+		dispatcher->push(&impl);
+		dispatcher->m_value = &impl;
+		impl.Init();
+		return impl.StartArray(dispatcher);
+	}
+private:
+	class IngestColJSONVariantImpl : public JSONValue {
+	public:
+		IngestColJSONVariantImpl(IngestColBase *column) : JSONValue(column), jwriter(buffer) {
 		}
-		return new JSONListWrapper<JSONList>(col, cur_row);
+
+		virtual bool Null() override { return jwriter.Null(); }
+		virtual bool Bool(bool b) override { return jwriter.Bool(b); }
+		virtual bool Int(int i) override { return jwriter.Int(i); }
+		virtual bool Uint(unsigned i) override { return jwriter.Uint(i); }
+		virtual bool Int64(int64_t i) override { return jwriter.Int64(i); }
+		virtual bool Uint64(uint64_t i) override { return jwriter.Uint64(i); }
+		virtual bool Double(double d) override { return jwriter.Double(d); }
+		virtual bool String(const char* s, int length, bool copy) override { return jwriter.String(s, length); }
+		virtual bool StartObject(JSONDispatcher* dispatcher) override {
+			++m_level;
+			return jwriter.StartObject();
+		}
+		virtual bool Key(const char* s, int length, bool copy, JSONDispatcher* dispatcher) override { return jwriter.Key(s, length); }
+		virtual bool EndObject(JSONDispatcher* dispatcher) override {
+			jwriter.EndObject();
+			if (--m_level == 0) {
+				Finalize();
+				dispatcher->pop();
+			}
+			return true;
+		}
+		virtual bool StartArray(JSONDispatcher* dispatcher) override {
+			++m_level;
+			return jwriter.StartArray();
+		}
+		virtual bool EndArray(JSONDispatcher* dispatcher) override {
+			jwriter.EndArray();
+			if (--m_level == 0) {
+				Finalize();
+				dispatcher->pop();
+			}
+			return true;
+		}
+		void Init() {
+			m_level = 0;
+			buffer.Clear();
+			jwriter.Reset(buffer);
+		}
+		void Finalize() {
+			column.Write(string_t(buffer.GetString(), buffer.GetSize()));
+		}
+
+		size_t m_level;
+		rj::StringBuffer buffer;
+		rj::Writer<rj::StringBuffer> jwriter;
+	};
+
+	IngestColJSONVariantImpl impl;
+};
+
+JSONValue *JSONBuildColumn(const IngestColumnDefinition &col, idx_t &cur_row, bool ignore_list) {
+	if (!ignore_list && col.is_list) {
+		return new JSONListWrapper(col, cur_row);
 	}
 	switch(col.column_type) {
 	case ColumnType::String: return new JSONCol<IngestColVARCHAR>(col.column_name, cur_row);
@@ -703,7 +643,7 @@ JSONValue *JSONBuildColumn(const IngestColumnDefinition &col, idx_t &cur_row) {
 	case ColumnType::Numeric: return new JSONCol<IngestColNUMERIC>(col.column_name, cur_row);
 	case ColumnType::Geography: return new JSONCol<IngestColGEO>(col.column_name, cur_row);
 	case ColumnType::Struct: return new JSONStruct(col, cur_row);
-	case ColumnType::Variant: return new JSONCol<IngestColVARIANT>(col.column_name, cur_row);
+	case ColumnType::Variant: return new IngestColJSONVariant(col.column_name, cur_row);
 	default:
 		D_ASSERT(false);
 		return new JSONCol<IngestColBase>(col.column_name, cur_row);

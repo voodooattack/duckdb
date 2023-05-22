@@ -57,7 +57,7 @@ protected:
 	}
 };
 
-JSONValue *JSONBuildColumn(const IngestColumnDefinition &col, idx_t &cur_row);
+JSONValue *JSONBuildColumn(const IngestColumnDefinition &col, idx_t &cur_row, bool ignore_list=false);
 
 class JSONTopListStruct : public JSONHandler {
 public:
@@ -79,7 +79,7 @@ public:
 	virtual bool StartObject(JSONDispatcher* dispatcher) override
 	{
 		m_children.Clear();
-		dispatcher->push(this);
+		//dispatcher->push(this);
 		return true;
 	}
 	virtual bool Key(const char* s, int length, bool copy, JSONDispatcher* dispatcher) override

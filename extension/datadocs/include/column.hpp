@@ -186,11 +186,6 @@ public:
 	using IngestColBase::IngestColBase, IngestColBase::Write;
 };
 
-class IngestColVARIANT : public IngestColBase {
-public:
-	using IngestColBase::IngestColBase, IngestColBase::Write;
-};
-
 struct IngestColChildrenMap {
 	void Clear() {
 		valid.assign(keys.size(), false);
