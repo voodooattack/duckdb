@@ -42,15 +42,15 @@ endfunction()
 
 # Zlib
 fetch_dependency(zlib "cmake/zlib/zlib.txt.in")
-include(cmake/zlib/zlib.cmake)
+include(cmake/zlib/zlib.cmake.txt)
 
 # ICU
 fetch_dependency(icu "cmake/icu/icu.txt.in")
-include(cmake/icu/icu.cmake)
+include(cmake/icu/icu.cmake.txt)
 
 # libexpat
 fetch_dependency(expat "cmake/libexpat/libexpat.txt.in")
-include(cmake/libexpat/libexpat.cmake)
+include(cmake/libexpat/libexpat.cmake.txt)
 
 # Boost
 fetch_dependency(boost "cmake/boost/boost.txt.in")
