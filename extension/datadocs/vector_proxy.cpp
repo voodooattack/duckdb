@@ -32,7 +32,7 @@ bool VectorReader::IsNull() const noexcept {
 
 std::string_view VectorReader::GetString() const noexcept {
 	const string_t &s = Get<string_t>();
-	return {s.GetDataUnsafe(), s.GetSize()};
+	return {s.GetDataUnsafe(), (size_t)s.GetSize()};
 }
 
 VectorReader VectorReader::operator[](size_t index) const noexcept {
