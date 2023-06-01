@@ -136,7 +136,7 @@ if(_EXPAT_UNICODE)
     endif()
 endif()
 
-include(cmake/libexpat/libexpat.ConfigureChecks.cmake)
+include(cmake/libexpat/libexpat.ConfigureChecks.cmake.txt)
 
 macro(evaluate_detection_results use_ref have_ref thing_lower thing_title)
     if(${use_ref} AND NOT (${use_ref} STREQUAL "AUTO") AND NOT ${have_ref})
