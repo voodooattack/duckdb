@@ -189,3 +189,5 @@ add_library(
 set(GEO_LIBRARY_FILES
     ${GEO_LIBRARY_FILES} $<TARGET_OBJECTS:duckdb_geo_geos>
     PARENT_SCOPE)
+
+add_definitions(-include cstdint)
