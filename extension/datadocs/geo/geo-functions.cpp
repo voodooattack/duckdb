@@ -6,8 +6,8 @@
 
 #if defined(_MSC_VER)
 #include <windows.h>
-void usleep(__int64 usec)
-{
+void usleep(__int64 usec) 
+{ 
 	HANDLE timer;
 	LARGE_INTEGER ft;
 

@@ -812,15 +812,13 @@ public:
 template <class Reader>
 static void FromVariantFunc(DataChunk &args, ExpressionState &state, Vector &result) {
 	D_ASSERT(args.data[0].GetType() == DDVariantType);
-	Reader reader;
-	VectorExecute(args, result, static_cast<VariantReaderBase &>(reader), &VariantReaderBase::ProcessScalar);
+	VectorExecute(args, result, Reader(), &Reader::ProcessScalar);
 }
 
 template <class Reader>
 static void FromVariantListFunc(DataChunk &args, ExpressionState &state, Vector &result) {
 	D_ASSERT(args.data[0].GetType() == DDVariantType);
-	Reader reader;
-	VectorExecute(args, result, static_cast<VariantReaderBase&>(reader), &VariantReaderBase::ProcessList);
+	VectorExecute(args, result, Reader(), &Reader::ProcessList);
 }
 
 static bool VariantAccessWrite(VectorWriter &result, const VectorReader &arg, yyjson_val *val, JSONAllocator &alc) {

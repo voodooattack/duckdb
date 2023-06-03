@@ -4,12 +4,7 @@ project(DataDocsExtension)
 
 include_directories(${CMAKE_BINARY_DIR}/include)
 
-if (CMAKE_VERSION VERSION_LESS "3.1")
-    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
-else ()
-  set (CMAKE_CXX_STANDARD 17)
-endif ()
-
+set(CMAKE_CXX_STANDARD 17)
 
 if (NOT WIN32)
   # No exceptions
@@ -107,7 +102,6 @@ set(DATADOCS_EXTENSION_FILES
 	xls_reader.cpp
 	xml_reader.cpp
 	zip_reader.cpp
-  ${YYJSON_OBJECT_FILES}
 	${GEO_EXTENSION_FILES})
 
 add_library(datadocs_extension STATIC ${DATADOCS_EXTENSION_FILES})
@@ -123,8 +117,6 @@ target_include_directories(datadocs_extension
 	PRIVATE $<TARGET_PROPERTY:expat,INTERFACE_INCLUDE_DIRECTORIES>
 	# Privately includes icu
 	PRIVATE $<TARGET_PROPERTY:icu,INTERFACE_INCLUDE_DIRECTORIES>)
-
-add_dependencies(datadocs_extension yyjson)
 
 target_link_libraries(datadocs_extension
         PRIVATE zlib
