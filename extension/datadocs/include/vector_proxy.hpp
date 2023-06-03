@@ -165,9 +165,9 @@ void VectorExecute(DataChunk &args, Vector &result, bool(*func)(VectorWriter &, 
 	VectorExecuteImpl<CHECK_NULL>(args, result, func, std::index_sequence_for<ARGS...>());
 }
 
-template <bool CHECK_NULL = true, class T, typename... ARGS>
+template <bool CHECK_NULL = true, class T, typename... ARGS, typename E = typename std::remove_reference<T>::type>
 void VectorExecute(DataChunk &args, Vector &result, T &&instance,
-	               bool(std::remove_reference_t<T>::*method)(VectorWriter &, ARGS...)) {
+	               bool(E::*method)(VectorWriter &, ARGS...)) {
 	VectorExecuteImpl<CHECK_NULL>(
 	    args, result, [&](auto &&...args) { return (instance.*method)(std::forward<decltype(args)>(args)...); },
 	    std::index_sequence_for<ARGS...>());
