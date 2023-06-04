@@ -330,6 +330,52 @@ Value Value::MaximumValue(const LogicalType &type) {
 	}
 }
 
+Value Value::Infinity(const LogicalType &type) {
+	switch (type.id()) {
+	case LogicalTypeId::DATE:
+		return Value::DATE(date_t::infinity());
+	case LogicalTypeId::TIMESTAMP:
+		return Value::TIMESTAMP(timestamp_t::infinity());
+	case LogicalTypeId::TIMESTAMP_MS:
+		return Value::TIMESTAMPMS(timestamp_t::infinity());
+	case LogicalTypeId::TIMESTAMP_NS:
+		return Value::TIMESTAMPNS(timestamp_t::infinity());
+	case LogicalTypeId::TIMESTAMP_SEC:
+		return Value::TIMESTAMPSEC(timestamp_t::infinity());
+	case LogicalTypeId::TIMESTAMP_TZ:
+		return Value::TIMESTAMPTZ(timestamp_t::infinity());
+	case LogicalTypeId::FLOAT:
+		return Value::FLOAT(std::numeric_limits<float>::infinity());
+	case LogicalTypeId::DOUBLE:
+		return Value::DOUBLE(std::numeric_limits<double>::infinity());
+	default:
+		throw InvalidTypeException(type, "Infinity requires numeric type");
+	}
+}
+
+Value Value::NegativeInfinity(const LogicalType &type) {
+	switch (type.id()) {
+	case LogicalTypeId::DATE:
+		return Value::DATE(date_t::ninfinity());
+	case LogicalTypeId::TIMESTAMP:
+		return Value::TIMESTAMP(timestamp_t::ninfinity());
+	case LogicalTypeId::TIMESTAMP_MS:
+		return Value::TIMESTAMPMS(timestamp_t::ninfinity());
+	case LogicalTypeId::TIMESTAMP_NS:
+		return Value::TIMESTAMPNS(timestamp_t::ninfinity());
+	case LogicalTypeId::TIMESTAMP_SEC:
+		return Value::TIMESTAMPSEC(timestamp_t::ninfinity());
+	case LogicalTypeId::TIMESTAMP_TZ:
+		return Value::TIMESTAMPTZ(timestamp_t::ninfinity());
+	case LogicalTypeId::FLOAT:
+		return Value::FLOAT(-std::numeric_limits<float>::infinity());
+	case LogicalTypeId::DOUBLE:
+		return Value::DOUBLE(-std::numeric_limits<double>::infinity());
+	default:
+		throw InvalidTypeException(type, "NegativeInfinity requires numeric type");
+	}
+}
+
 Value Value::BOOLEAN(int8_t value) {
 	Value result(LogicalType::BOOLEAN);
 	result.value_.boolean = bool(value);
@@ -684,7 +730,7 @@ Value Value::EMPTYLIST(const LogicalType &child_type) {
 Value Value::BLOB(const_data_ptr_t data, idx_t len) {
 	Value result(LogicalType::BLOB);
 	result.is_null = false;
-	result.value_info_ = make_shared<StringValueInfo>(string((const char *)data, len));
+	result.value_info_ = make_shared<StringValueInfo>(string(const_char_ptr_cast(data), len));
 	return result;
 }
 
@@ -698,7 +744,7 @@ Value Value::BLOB(const string &data) {
 Value Value::BIT(const_data_ptr_t data, idx_t len) {
 	Value result(LogicalType::BIT);
 	result.is_null = false;
-	result.value_info_ = make_shared<StringValueInfo>(string((const char *)data, len));
+	result.value_info_ = make_shared<StringValueInfo>(string(const_char_ptr_cast(data), len));
 	return result;
 }
 
@@ -1273,6 +1319,7 @@ string Value::ToSQLString() const {
 	case LogicalTypeId::BLOB:
 		return "'" + ToString() + "'::" + type_.ToString();
 	case LogicalTypeId::VARCHAR:
+	case LogicalTypeId::ENUM:
 		return "'" + StringUtil::Replace(ToString(), "'", "''") + "'";
 	case LogicalTypeId::STRUCT: {
 		string ret = "{";
@@ -1755,7 +1802,12 @@ void Value::FormatSerialize(FormatSerializer &serializer) const {
 			serializer.WriteProperty("value", value_.interval);
 			break;
 		case PhysicalType::VARCHAR:
-			serializer.WriteProperty("value", StringValue::Get(*this));
+			if (type_.id() == LogicalTypeId::BLOB) {
+				auto blob_str = Blob::ToString(StringValue::Get(*this));
+				serializer.WriteProperty("value", blob_str);
+			} else {
+				serializer.WriteProperty("value", StringValue::Get(*this));
+			}
 			break;
 		default: {
 			Vector v(*this);
@@ -1802,6 +1854,9 @@ Value Value::FormatDeserialize(FormatDeserializer &deserializer) {
 	case PhysicalType::INT64:
 		new_value.value_.bigint = deserializer.ReadProperty<int64_t>("value");
 		break;
+	case PhysicalType::INT128:
+		new_value.value_.hugeint = deserializer.ReadProperty<hugeint_t>("value");
+		break;
 	case PhysicalType::FLOAT:
 		new_value.value_.float_ = deserializer.ReadProperty<float>("value");
 		break;
@@ -1811,9 +1866,14 @@ Value Value::FormatDeserialize(FormatDeserializer &deserializer) {
 	case PhysicalType::INTERVAL:
 		new_value.value_.interval = deserializer.ReadProperty<interval_t>("value");
 		break;
-	case PhysicalType::VARCHAR:
-		new_value.value_info_ = make_shared<StringValueInfo>(deserializer.ReadProperty<string>("value"));
-		break;
+	case PhysicalType::VARCHAR: {
+		auto str = deserializer.ReadProperty<string>("value");
+		if (type.id() == LogicalTypeId::BLOB) {
+			new_value.value_info_ = make_shared<StringValueInfo>(Blob::ToBlob(str));
+		} else {
+			new_value.value_info_ = make_shared<StringValueInfo>(str);
+		}
+	} break;
 	default: {
 		Vector v(type);
 		v.FormatDeserialize(deserializer, 1);

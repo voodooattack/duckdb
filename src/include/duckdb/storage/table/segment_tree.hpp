@@ -56,12 +56,20 @@ public:
 		if (nodes.empty()) {
 			LoadNextSegment(l);
 		}
-		return nodes.empty() ? nullptr : nodes[0].node.get();
+		return GetRootSegmentInternal();
 	}
 	//! Obtains ownership of the data of the segment tree
 	vector<SegmentNode<T>> MoveSegments(SegmentLock &l) {
 		LoadAllSegments(l);
 		return std::move(nodes);
+	}
+	vector<SegmentNode<T>> MoveSegments() {
+		auto l = Lock();
+		return MoveSegments(l);
+	}
+	idx_t GetSegmentCount() {
+		auto l = Lock();
+		return nodes.size();
 	}
 	//! Gets a pointer to the nth segment. Negative numbers start from the back.
 	T *GetSegmentByIndex(int64_t index) {
@@ -243,6 +251,20 @@ public:
 		return SegmentIterationHelper(*this);
 	}
 
+	void Reinitialize() {
+		if (nodes.empty()) {
+			return;
+		}
+		idx_t offset = nodes[0].node->start;
+		for (auto &entry : nodes) {
+			if (entry.node->start != offset) {
+				throw InternalException("In SegmentTree::Reinitialize - gap found between nodes!");
+			}
+			entry.row_start = offset;
+			offset += entry.node->count;
+		}
+	}
+
 protected:
 	atomic<bool> finished_loading;
 
@@ -258,6 +280,10 @@ private:
 	mutex node_lock;
 
 private:
+	T *GetRootSegmentInternal() {
+		return nodes.empty() ? nullptr : nodes[0].node.get();
+	}
+
 	class SegmentIterationHelper {
 	public:
 		explicit SegmentIterationHelper(SegmentTree &tree) : tree(tree) {
@@ -304,6 +330,9 @@ private:
 
 	//! Load the next segment, if there are any left to load
 	bool LoadNextSegment(SegmentLock &l) {
+		if (!SUPPORTS_LAZY_LOADING) {
+			return false;
+		}
 		if (finished_loading) {
 			return false;
 		}
@@ -317,6 +346,9 @@ private:
 
 	//! Load all segments, if there are any left to load
 	void LoadAllSegments(SegmentLock &l) {
+		if (!SUPPORTS_LAZY_LOADING) {
+			return;
+		}
 		while (LoadNextSegment(l))
 			;
 	}
