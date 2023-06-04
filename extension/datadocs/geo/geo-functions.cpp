@@ -337,9 +337,8 @@ struct AsBinaryUnaryOperator {
 		}
 		auto gser = Geometry::GetGserialized(geom);
 		auto binary = Geometry::AsBinary(gser);
-		idx_t size = LWSIZE_GET(binary->size) - LWVARHDRSZ;
-		auto result_str = StringVector::EmptyString(result, size);
-		memcpy(result_str.GetDataWriteable(), binary->data, size);
+		auto result_str = StringVector::EmptyString(result, binary->size);
+		memcpy(result_str.GetDataWriteable(), binary->data, binary->size);
 		result_str.Finalize();
 		Geometry::DestroyGeometry(gser);
 		return result_str;
@@ -352,9 +351,8 @@ static string_t AsBinaryScalarFunction(Vector &result, string_t geom, string_t t
 	}
 	auto gser = Geometry::GetGserialized(geom);
 	auto binary = Geometry::AsBinary(gser, text.GetString());
-	idx_t size = LWSIZE_GET(binary->size) - LWVARHDRSZ;
-	auto result_str = StringVector::EmptyString(result, size);
-	memcpy(result_str.GetDataWriteable(), binary->data, size);
+	auto result_str = StringVector::EmptyString(result, binary->size);
+	memcpy(result_str.GetDataWriteable(), binary->data, binary->size);
 	result_str.Finalize();
 	Geometry::DestroyGeometry(gser);
 	return result_str;

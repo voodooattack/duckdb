@@ -5,12 +5,10 @@
 namespace duckdb {
 
 void DataDocsExtension::Load(DuckDB &db) {
-	Connection con(db);
-	con.BeginTransaction();
-	LoadGeo(con);
-	LoadVariant(con);
-	LoadIngest(con);
-	con.Commit();
+	auto &inst = *db.instance;
+	LoadGeo(inst);
+	LoadVariant(inst);
+	LoadIngest(inst);
 }
 
 string DataDocsExtension::Name() {

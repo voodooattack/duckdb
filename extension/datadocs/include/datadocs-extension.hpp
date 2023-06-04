@@ -10,9 +10,9 @@ public:
 	string Name() override;
 
 private:
-	void LoadGeo(Connection &con);
-	void LoadVariant(Connection &con);
-	void LoadIngest(Connection &con);
+	void LoadGeo(DatabaseInstance &inst);
+	void LoadVariant(DatabaseInstance &inst);
+	void LoadIngest(DatabaseInstance &inst);
 };
 
 } // namespace duckdb

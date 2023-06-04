@@ -143,7 +143,7 @@ public:
 	virtual bool open() = 0;
 	virtual void close() = 0;
 	virtual void BuildColumns() = 0;
-	virtual void BindSchema(vector<LogicalType> &return_types, vector<string> &names) = 0;
+	virtual void BindSchema(std::vector<LogicalType> &return_types, std::vector<string> &names) = 0;
 	virtual idx_t FillChunk(DataChunk &output) = 0;
 	virtual int get_percent_complete() = 0;
 	virtual size_t get_sheet_count() = 0;

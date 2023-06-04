@@ -1,7 +1,5 @@
 #include "duckdb.hpp"
-#ifndef DUCKDB_AMALGAMATION
-#include "duckdb/parser/parsed_data/create_table_function_info.hpp"
-#endif
+#include "duckdb/main/extension_util.hpp"
 
 #include "datadocs-extension.hpp"
 #include "datadocs.hpp"
@@ -16,7 +14,7 @@ struct IngestBindData : public TableFunctionData {
 	    : parser(Parser::get_parser(file_name)) {
 	}
 
-	void BindSchema(vector<LogicalType> &return_types, vector<string> &names) {
+	void BindSchema(std::vector<LogicalType> &return_types, std::vector<string> &names) {
 		if (!parser->infer_schema()) {
 			throw InvalidInputException("Cannot ingest file");
 		}
@@ -33,20 +31,20 @@ static unique_ptr<FunctionData> IngestBind(ClientContext &context, TableFunction
 		throw PermissionException("Scanning external files is disabled through configuration");
 	}
 	const string &file_name = StringValue::Get(input.inputs[0]);
-	auto result = make_unique<IngestBindData>(file_name);
+	auto result = make_uniq<IngestBindData>(file_name);
 	result->BindSchema(return_types, names);
-	return result;
+	return std::move(result);
 }
 
 static unique_ptr<GlobalTableFunctionState> IngestInit(ClientContext &context, TableFunctionInitInput &input) {
-	auto *bind_data = (IngestBindData *)input.bind_data;
-	bind_data->parser->open();
+	auto &bind_data = input.bind_data->Cast<IngestBindData>();
+	bind_data.parser->open();
 	return nullptr;
 }
 
 static void IngestImpl(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
-	auto *bind_data = (IngestBindData *)data_p.bind_data;
-	auto &parser = *bind_data->parser;
+	auto &bind_data = data_p.bind_data->Cast<IngestBindData>();
+	auto &parser = *bind_data.parser;
 	if (parser.is_finished) {
 		return;
 	}
@@ -56,12 +54,9 @@ static void IngestImpl(ClientContext &context, TableFunctionInput &data_p, DataC
 
 } // namespace
 
-void DataDocsExtension::LoadIngest(Connection &con) {
-	auto &context = *con.context;
-	auto &catalog = Catalog::GetSystemCatalog(context);
-	CreateTableFunctionInfo schema_info(
-	    TableFunction("ingest_file", {LogicalType::VARCHAR}, IngestImpl, IngestBind, IngestInit));
-	catalog.CreateTableFunction(context, &schema_info);
+void DataDocsExtension::LoadIngest(DatabaseInstance &inst) {
+	ExtensionUtil::RegisterFunction(
+	    inst, TableFunction("ingest_file", {LogicalType::VARCHAR}, IngestImpl, IngestBind, IngestInit));
 }
 
 } // namespace duckdb

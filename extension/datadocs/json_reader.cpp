@@ -43,7 +43,7 @@ public:
 	virtual bool EndArray(JSONDispatcher* dispatcher) override { return false; }
 protected:
 	size_t m_level;
-	const vector<string>& m_start_path;
+	const std::vector<string>& m_start_path;
 };
 
 bool JSONDispatcher::parse_string(const string& input, JSONHandler* handler)
@@ -62,8 +62,8 @@ void JSONDispatcher::init(JSONHandler* root)
 	m_suspended = false;
 }
 
-static void JSONBuildColumns(const vector<IngestColumnDefinition> &fields, std::unordered_map<string, size_t> &keys,
-    vector<std::unique_ptr<JSONValue>> &columns, idx_t &cur_row);
+static void JSONBuildColumns(const std::vector<IngestColumnDefinition> &fields, std::unordered_map<string, size_t> &keys,
+    std::vector<std::unique_ptr<JSONValue>> &columns, idx_t &cur_row);
 
 template <class Col>
 class JSONCol : public JSONValue, public Col {
@@ -125,7 +125,7 @@ public:
 	}
 
 public:
-	vector<std::unique_ptr<JSONValue>> m_columns;
+	std::vector<std::unique_ptr<JSONValue>> m_columns;
 	IngestColChildrenMap m_children;
 };
 
@@ -162,19 +162,16 @@ public:
 		return child->column.GetType();
 	}
 	void Init(list_entry_t &entry) {
-		entry.offset = buffer->size;
+		entry.offset = buffer->GetSize();
 		entry.length = 0;
 		length = &entry.length;
 	}
 
 protected:
 	void Append() {
-		if (buffer->size + 1 > buffer->capacity) {
-			buffer->GetChild().Resize(buffer->capacity, buffer->capacity * 2);
-			buffer->capacity *= 2;
-		}
-		cur_row = buffer->size;
-		++buffer->size;
+		cur_row = buffer->GetSize();
+		buffer->Reserve(cur_row + 1);
+		buffer->SetSize(cur_row + 1);
 		++(*length);
 	}
 
@@ -601,8 +598,8 @@ JSONValue *JSONBuildColumn(const IngestColumnDefinition &col, idx_t &cur_row, bo
 	}
 }
 
-static void JSONBuildColumns(const vector<IngestColumnDefinition> &fields, std::unordered_map<string, size_t> &keys,
-    vector<std::unique_ptr<JSONValue>> &columns, idx_t &cur_row) {
+static void JSONBuildColumns(const std::vector<IngestColumnDefinition> &fields, std::unordered_map<string, size_t> &keys,
+    std::vector<std::unique_ptr<JSONValue>> &columns, idx_t &cur_row) {
 	for (const auto &col : fields) {
 		if (col.index < 0) {
 			continue;
@@ -666,11 +663,11 @@ void JSONTopListStruct::BuildColumns(JSONSchema &schema) {
 	JSONBuildColumns(schema.columns, m_children.keys, m_columns, cur_row);
 }
 
-void JSONParser::BindSchema(vector<LogicalType> &return_types, vector<string> &names) {
+void JSONParser::BindSchema(std::vector<LogicalType> &return_types, std::vector<string> &names) {
 	m_top.BindSchema(return_types, names);
 }
 
-void JSONTopListStruct::BindSchema(vector<LogicalType> &return_types, vector<string> &names) {
+void JSONTopListStruct::BindSchema(std::vector<LogicalType> &return_types, std::vector<string> &names) {
 	for (auto &col : m_columns) {
 		names.push_back(col->column.GetName());
 		return_types.push_back(col->column.GetType());

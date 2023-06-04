@@ -1,7 +1,7 @@
 #include <charconv>
 
 #include "duckdb.hpp"
-#ifndef DUCKDB_AMALGAMATION
+#include "duckdb/main/extension_util.hpp"
 #include "duckdb/common/types/blob.hpp"
 #include "duckdb/common/types/decimal.hpp"
 #include "duckdb/common/types/date.hpp"
@@ -9,8 +9,6 @@
 #include "duckdb/common/types/timestamp.hpp"
 #include "duckdb/common/types/interval.hpp"
 #include "duckdb/common/types/uuid.hpp"
-#include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
-#endif
 #include "fmt/format.h"
 #include "json_common.hpp"
 #include "geometry.hpp"
@@ -222,7 +220,7 @@ public:
 
 	bool Process(VectorWriter &result, const VectorReader &arg) {
 		alc.Reset();
-		doc = JSONCommon::CreateDocument(alc.GetYYJSONAllocator());
+		doc = JSONCommon::CreateDocument(alc.GetYYAlc());
 		yyjson_mut_val *root = ProcessValue(arg);
 		if (yyjson_mut_is_null(root)) {
 			return false;
@@ -231,7 +229,7 @@ public:
 		writer[0].SetString(type_name);
 		yyjson_mut_doc_set_root(doc, root);
 		size_t len;
-		char *data = yyjson_mut_write_opts(doc, 0, alc.GetYYJSONAllocator(), &len, nullptr);
+		char *data = yyjson_mut_write_opts(doc, 0, alc.GetYYAlc(), &len, nullptr);
 		writer[1].SetString(string_t(data, len));
 		return true;
 	}
@@ -330,7 +328,7 @@ private:
 	yyjson_mut_val *WriteEnumImpl(idx_t val) {
 		const Vector &enum_dictionary = EnumType::GetValuesInsertOrder(*type);
 		const string_t &s = FlatVector::GetData<string_t>(enum_dictionary)[val];
-		return yyjson_mut_strncpy(doc, s.GetDataUnsafe(), s.GetSize());
+		return yyjson_mut_strncpy(doc, s.GetData(), s.GetSize());
 	}
 
 	yyjson_mut_val *WriteDate(const VectorReader &arg) {
@@ -368,7 +366,7 @@ private:
 	}
 
 	yyjson_mut_val *WriteJSON(const VectorReader &arg) {
-		auto arg_doc = JSONCommon::ReadDocument(arg.Get<string_t>(), JSONCommon::READ_FLAG, alc.GetYYJSONAllocator());
+		auto arg_doc = JSONCommon::ReadDocument(arg.Get<string_t>(), JSONCommon::READ_FLAG, alc.GetYYAlc());
 		return yyjson_val_mut_copy(doc, yyjson_doc_get_root(arg_doc));
 	}
 
@@ -449,14 +447,14 @@ class VariantReaderBase {
 public:
 	bool ProcessScalar(VectorWriter &result, const VectorReader &arg) {
 		alc.Reset();
-		auto doc = JSONCommon::ReadDocument(arg[1].Get<string_t>(), JSONCommon::READ_FLAG, alc.GetYYJSONAllocator());
+		auto doc = JSONCommon::ReadDocument(arg[1].Get<string_t>(), JSONCommon::READ_FLAG, alc.GetYYAlc());
 		auto val = yyjson_doc_get_root(doc);
 		return ReadScalar(result, val);
 	}
 
 	bool ProcessList(VectorWriter &result, const VectorReader &arg) {
 		alc.Reset();
-		auto doc = JSONCommon::ReadDocument(arg[1].Get<string_t>(), JSONCommon::READ_FLAG, alc.GetYYJSONAllocator());
+		auto doc = JSONCommon::ReadDocument(arg[1].Get<string_t>(), JSONCommon::READ_FLAG, alc.GetYYAlc());
 		auto root = yyjson_doc_get_root(doc);
 		yyjson_arr_iter iter;
 		if (!yyjson_arr_iter_init(root, &iter)) {
@@ -775,10 +773,10 @@ public:
 	}
 
 	bool ReadScalar(VectorWriter &result, yyjson_val *val) override {
-		auto res_doc = JSONCommon::CreateDocument(alc.GetYYJSONAllocator());
+		auto res_doc = JSONCommon::CreateDocument(alc.GetYYAlc());
 		yyjson_mut_doc_set_root(res_doc, yyjson_val_mut_copy(res_doc, val));
 		size_t len;
-		char *data = yyjson_mut_write_opts(res_doc, 0, alc.GetYYJSONAllocator(), &len, nullptr);
+		char *data = yyjson_mut_write_opts(res_doc, 0, alc.GetYYAlc(), &len, nullptr);
 		result.SetString(string_t(data, len));
 		return true;
 	}
@@ -857,10 +855,10 @@ static bool VariantAccessWrite(VectorWriter &result, const VectorReader &arg, yy
 
 	VectorStructWriter writer = result.SetStruct();
 	writer[0].SetString(res_type);
-	auto res_doc = JSONCommon::CreateDocument(alc.GetYYJSONAllocator());
+	auto res_doc = JSONCommon::CreateDocument(alc.GetYYAlc());
 	yyjson_mut_doc_set_root(res_doc, yyjson_val_mut_copy(res_doc, val));
 	size_t len;
-	char *data = yyjson_mut_write_opts(res_doc, 0, alc.GetYYJSONAllocator(), &len, nullptr);
+	char *data = yyjson_mut_write_opts(res_doc, 0, alc.GetYYAlc(), &len, nullptr);
 	writer[1].SetString(string_t(data, len));
 	return true;
 }
@@ -868,7 +866,7 @@ static bool VariantAccessWrite(VectorWriter &result, const VectorReader &arg, yy
 static bool VariantAccessIndexImpl(VectorWriter &result, const VectorReader &arg, const VectorReader &index) {
 	int64_t idx = index.Get<int64_t>();
 	JSONAllocator alc {Allocator::DefaultAllocator()};
-	auto arg_doc = JSONCommon::ReadDocument(arg[1].Get<string_t>(), JSONCommon::READ_FLAG, alc.GetYYJSONAllocator());
+	auto arg_doc = JSONCommon::ReadDocument(arg[1].Get<string_t>(), JSONCommon::READ_FLAG, alc.GetYYAlc());
 	auto arg_root = yyjson_doc_get_root(arg_doc);
 	return VariantAccessWrite(result, arg, yyjson_arr_get(arg_root, idx), alc);
 }
@@ -876,7 +874,7 @@ static bool VariantAccessIndexImpl(VectorWriter &result, const VectorReader &arg
 static bool VariantAccessKeyImpl(VectorWriter &result, const VectorReader &arg, const VectorReader &index) {
 	std::string_view key = index.GetString();
 	JSONAllocator alc {Allocator::DefaultAllocator()};
-	auto arg_doc = JSONCommon::ReadDocument(arg[1].Get<string_t>(), JSONCommon::READ_FLAG, alc.GetYYJSONAllocator());
+	auto arg_doc = JSONCommon::ReadDocument(arg[1].Get<string_t>(), JSONCommon::READ_FLAG, alc.GetYYAlc());
 	auto arg_root = yyjson_doc_get_root(arg_doc);
 	return VariantAccessWrite(result, arg, yyjson_obj_getn(arg_root, key.data(), key.size()), alc);
 }
@@ -954,7 +952,7 @@ static string VariantSortHashInt(const string &arg) {
 
 static bool VariantSortHashImpl(VectorWriter &writer, const VectorReader &arg, const VectorReader &case_sensitive) {
 	JSONAllocator alc {Allocator::DefaultAllocator()};
-	auto doc = JSONCommon::ReadDocument(arg[1].Get<string_t>(), JSONCommon::READ_FLAG, alc.GetYYJSONAllocator());
+	auto doc = JSONCommon::ReadDocument(arg[1].Get<string_t>(), JSONCommon::READ_FLAG, alc.GetYYAlc());
 	auto val = yyjson_doc_get_root(doc);
 	if (!val || unsafe_yyjson_is_null(val)) {
 		return false;
@@ -1048,10 +1046,10 @@ static bool VariantSortHashImpl(VectorWriter &writer, const VectorReader &arg, c
 	} else if (tp == "GEOGRAPHY") {
 		result = string("8") + unsafe_yyjson_get_str(val);
 	} else {
-		auto res_doc = JSONCommon::CreateDocument(alc.GetYYJSONAllocator());
+		auto res_doc = JSONCommon::CreateDocument(alc.GetYYAlc());
 		yyjson_mut_doc_set_root(res_doc, yyjson_val_mut_copy(res_doc, val));
 		size_t len;
-		char *data = yyjson_mut_write_opts(res_doc, 0, alc.GetYYJSONAllocator(), &len, nullptr);
+		char *data = yyjson_mut_write_opts(res_doc, 0, alc.GetYYAlc(), &len, nullptr);
 		result = '9';
 		if (!case_sensitive.Get<bool>() &&
 		    (tp == "STRING[]" || tp.substr(0, 4) == "JSON" || tp.substr(0, 6) == "STRUCT")) {
@@ -1213,21 +1211,15 @@ static void VariantFromSortHash(DataChunk &args, ExpressionState &state, Vector 
 } // namespace
 
 #define REGISTER_FUNCTION(TYPE, SQL_NAME, C_NAME)                                                                      \
-	CreateScalarFunctionInfo from_variant_##SQL_NAME##_info(                                                           \
+	ExtensionUtil::RegisterFunction(inst,                                                                              \
 	    ScalarFunction("from_variant_" #SQL_NAME, {DDVariantType}, TYPE, FromVariantFunc<VariantReader##C_NAME>));     \
-	catalog.CreateFunction(context, &from_variant_##SQL_NAME##_info);                                                  \
-	CreateScalarFunctionInfo from_variant_##SQL_NAME##_array_info(                                                     \
+	ExtensionUtil::RegisterFunction(inst,                                                                              \
 	    ScalarFunction("from_variant_" #SQL_NAME "_array", {DDVariantType}, LogicalType::LIST(TYPE),                   \
-	                   FromVariantListFunc<VariantReader##C_NAME>));                                                   \
-	catalog.CreateFunction(context, &from_variant_##SQL_NAME##_array_info);
+	                   FromVariantListFunc<VariantReader##C_NAME>));
 
-void DataDocsExtension::LoadVariant(Connection &con) {
-	auto &context = *con.context;
-	auto &catalog = Catalog::GetSystemCatalog(context);
-
-	CreateScalarFunctionInfo variant_info(
+void DataDocsExtension::LoadVariant(DatabaseInstance &inst) {
+	ExtensionUtil::RegisterFunction(inst,
 	    ScalarFunction("variant", {LogicalType::ANY}, DDVariantType, VariantFunction));
-	catalog.CreateFunction(context, &variant_info);
 
 	REGISTER_FUNCTION(LogicalType::BOOLEAN, bool, Bool)
 	REGISTER_FUNCTION(LogicalType::BIGINT, int64, Int64)
@@ -1248,16 +1240,13 @@ void DataDocsExtension::LoadVariant(Connection &con) {
 	    ScalarFunction({DDVariantType, LogicalType::BIGINT}, DDVariantType, VariantAccessIndexFunc));
 	variant_access_set.AddFunction(
 	    ScalarFunction({DDVariantType, LogicalType::VARCHAR}, DDVariantType, VariantAccessKeyFunc));
-	CreateScalarFunctionInfo variant_access_info(std::move(variant_access_set));
-	catalog.CreateFunction(context, &variant_access_info);
+	ExtensionUtil::RegisterFunction(inst, std::move(variant_access_set));
 
-	CreateScalarFunctionInfo sort_hash_info(ScalarFunction("variant_sort_hash", {DDVariantType, LogicalType::BOOLEAN},
-	                                                       LogicalType::VARCHAR, VariantSortHash));
-	catalog.CreateFunction(context, &sort_hash_info);
+	ExtensionUtil::RegisterFunction(inst, ScalarFunction("variant_sort_hash", {DDVariantType, LogicalType::BOOLEAN},
+	                                                     LogicalType::VARCHAR, VariantSortHash));
 
-	CreateScalarFunctionInfo from_sort_hash_info(
+	ExtensionUtil::RegisterFunction(inst,
 	    ScalarFunction("variant_from_sort_hash", {LogicalType::VARCHAR}, DDVariantType, VariantFromSortHash));
-	catalog.CreateFunction(context, &from_sort_hash_info);
 }
 
 } // namespace duckdb

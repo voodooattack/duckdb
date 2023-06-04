@@ -325,7 +325,7 @@ public:
 			last_pos = s.size();
 		}
 		auto &entry = Writer().GetList();
-		entry.offset = buffer->size;
+		entry.offset = buffer->GetSize();
 		entry.length = 0;
 		while (true)
 		{
@@ -338,12 +338,9 @@ public:
 				--end_pos;
 			string value = s.substr(pos, end_pos - pos);
 
-			if (buffer->size + 1 > buffer->capacity) {
-				buffer->GetChild().Resize(buffer->capacity, buffer->capacity * 2);
-				buffer->capacity *= 2;
-			}
-			list_row = buffer->size;
-			++buffer->size;
+			list_row = buffer->GetSize();
+			buffer->Reserve(list_row + 1);
+			buffer->SetSize(list_row + 1);
 			++entry.length;
 
 			if (value.empty() || !child->Write(value)) {
@@ -379,7 +376,7 @@ public:
 	};
 
 	bool Write(string_t v) override {
-		const char* begin = v.GetDataUnsafe();
+		const char* begin = v.GetData();
 		const char* end = begin + v.GetSize();
 		if (*begin == '<')
 		{
@@ -387,7 +384,7 @@ public:
 				return false;
 			while (std::isspace(*++begin));
 		}
-		vector<string> values;
+		std::vector<string> values;
 		while (begin < end)
 		{
 			if (!wkt_to_bytes(begin, end, values.emplace_back()))
@@ -483,7 +480,7 @@ void ParserImpl::BuildColumns() {
 	}
 }
 
-void ParserImpl::BindSchema(vector<LogicalType> &return_types, vector<string> &names) {
+void ParserImpl::BindSchema(std::vector<LogicalType> &return_types, std::vector<string> &names) {
 	for (auto &col : m_columns) {
 		names.push_back(col->GetName());
 		return_types.push_back(col->GetType());
