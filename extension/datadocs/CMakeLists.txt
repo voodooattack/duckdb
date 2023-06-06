@@ -6,18 +6,11 @@ include_directories(${CMAKE_BINARY_DIR}/include)
 
 set(CMAKE_CXX_STANDARD 17)
 
-if (NOT WIN32)
-  # No exceptions
-  #add_compile_options(-fno-exceptions)
-  add_definitions(-DBOOST_NO_EXCEPTIONS)
-  # Enable all warnings
-  add_compile_options(-Wall)
-  #add_compile_options(-Wextra)
-endif ()
+add_compile_options(-Wall)
 
 function (fetch_dependency name cmake_file)
-  if(EXISTS ${CMAKE_CURRENT_BINARY_DIR}/${name}-build)
-    message(WARNING "${Cyan}Dependency found - not rebuilding - ${CMAKE_CURRENT_BINARY_DIR}/${name}-build${ColorReset}")
+  if(EXISTS ${CMAKE_CURRENT_BINARY_DIR}/${name}-download/CMakeCache.txt)
+    message(WARNING "${Cyan}Dependency found - not downloading - ${CMAKE_CURRENT_BINARY_DIR}/${name}-build${ColorReset}")
   else()
     message("${Cyan}Fetching Dependency '${name}' - ${CMAKE_CURRENT_BINARY_DIR}/${name}-download${ColorReset}")
     configure_file(${cmake_file} ${name}-download/CMakeLists.txt)
@@ -27,13 +20,13 @@ function (fetch_dependency name cmake_file)
     if(result)
       message(FATAL_ERROR "CMake step for ${name} failed: ${result}")
     endif()
-    execute_process(COMMAND ${CMAKE_COMMAND} --build .
-            RESULT_VARIABLE result
-            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/${name}-download )
-    if(result)
-      message(FATAL_ERROR "Build step for ${name} failed: ${result}")
-    endif()
-  endif()
+	endif()
+	execute_process(COMMAND ${CMAKE_COMMAND} --build .
+					RESULT_VARIABLE result
+					WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/${name}-download )
+	if(result)
+		message(FATAL_ERROR "Build step for ${name} failed: ${result}")
+	endif()
 endfunction()
 
 ###################
