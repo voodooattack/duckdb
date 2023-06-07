@@ -60,61 +60,61 @@ if(MSVC)
   set(CMAKE_DEBUG_POSTFIX "d")
   add_definitions(-D_CRT_SECURE_NO_DEPRECATE)
   add_definitions(-D_CRT_NONSTDC_NO_DEPRECATE)
-  include_directories(${CMAKE_CURRENT_BINARY_DIR}/zlib)
+  include_directories(${DATADOCS_ZLIB_SOURCE_DIR})
 endif()
 
-# GAB: updated autogenrated file path to ${CMAKE_CURRENT_BINARY_DIR}/zlib-build
-set(ZLIB_PC ${CMAKE_CURRENT_BINARY_DIR}/zlib-build/zlib.pc)
-configure_file( cmake/zlib/zlib.pc.cmakein
+# GAB: updated autogenrated file path to ${DATADOCS_ZLIB_BUILD_DIR}
+set(ZLIB_PC ${DATADOCS_ZLIB_BUILD_DIR}/zlib.pc)
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/cmake/zlib/zlib.pc.cmakein
         ${ZLIB_PC} @ONLY)
-configure_file(	cmake/zlib/zconf.h.cmakein
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib-build/zconf.h @ONLY)
-include_directories(${CMAKE_CURRENT_BINARY_DIR}/zlib ${CMAKE_CURRENT_BINARY_DIR}/zlib-build)
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/cmake/zlib/zconf.h.cmakein
+        ${DATADOCS_ZLIB_BUILD_DIR}/zconf.h @ONLY)
+include_directories(${DATADOCS_ZLIB_SOURCE_DIR} ${DATADOCS_ZLIB_BUILD_DIR})
 
 
 #============================================================================
 # zlib
 #============================================================================
 
-# GAB: prefixed all source files with ${CMAKE_CURRENT_BINARY_DIR}/zlib, to match with zlib.txt.in
+# GAB: prefixed all source files with ${DATADOCS_ZLIB_SOURCE_DIR}/zlib, to match with zlib.txt.in
 
 set(ZLIB_PUBLIC_HDRS
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib-build/zconf.h
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib/zlib.h
+        ${DATADOCS_ZLIB_BUILD_DIR}/zconf.h
+        ${DATADOCS_ZLIB_SOURCE_DIR}/zlib.h
         )
 set(ZLIB_PRIVATE_HDRS
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib/crc32.h
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib/deflate.h
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib/gzguts.h
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib/inffast.h
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib/inffixed.h
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib/inflate.h
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib/inftrees.h
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib/trees.h
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib/zutil.h
+        ${DATADOCS_ZLIB_SOURCE_DIR}/crc32.h
+        ${DATADOCS_ZLIB_SOURCE_DIR}/deflate.h
+        ${DATADOCS_ZLIB_SOURCE_DIR}/gzguts.h
+        ${DATADOCS_ZLIB_SOURCE_DIR}/inffast.h
+        ${DATADOCS_ZLIB_SOURCE_DIR}/inffixed.h
+        ${DATADOCS_ZLIB_SOURCE_DIR}/inflate.h
+        ${DATADOCS_ZLIB_SOURCE_DIR}/inftrees.h
+        ${DATADOCS_ZLIB_SOURCE_DIR}/trees.h
+        ${DATADOCS_ZLIB_SOURCE_DIR}/zutil.h
         )
 set(ZLIB_SRCS
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib/adler32.c
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib/compress.c
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib/crc32.c
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib/deflate.c
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib/gzclose.c
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib/gzlib.c
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib/gzread.c
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib/gzwrite.c
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib/inflate.c
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib/infback.c
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib/inftrees.c
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib/inffast.c
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib/trees.c
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib/uncompr.c
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib/zutil.c
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib/contrib/minizip/unzip.c
-        ${CMAKE_CURRENT_BINARY_DIR}/zlib/contrib/minizip/ioapi.c
+        ${DATADOCS_ZLIB_SOURCE_DIR}/adler32.c
+        ${DATADOCS_ZLIB_SOURCE_DIR}/compress.c
+        ${DATADOCS_ZLIB_SOURCE_DIR}/crc32.c
+        ${DATADOCS_ZLIB_SOURCE_DIR}/deflate.c
+        ${DATADOCS_ZLIB_SOURCE_DIR}/gzclose.c
+        ${DATADOCS_ZLIB_SOURCE_DIR}/gzlib.c
+        ${DATADOCS_ZLIB_SOURCE_DIR}/gzread.c
+        ${DATADOCS_ZLIB_SOURCE_DIR}/gzwrite.c
+        ${DATADOCS_ZLIB_SOURCE_DIR}/inflate.c
+        ${DATADOCS_ZLIB_SOURCE_DIR}/infback.c
+        ${DATADOCS_ZLIB_SOURCE_DIR}/inftrees.c
+        ${DATADOCS_ZLIB_SOURCE_DIR}/inffast.c
+        ${DATADOCS_ZLIB_SOURCE_DIR}/trees.c
+        ${DATADOCS_ZLIB_SOURCE_DIR}/uncompr.c
+        ${DATADOCS_ZLIB_SOURCE_DIR}/zutil.c
+        ${DATADOCS_ZLIB_SOURCE_DIR}/contrib/minizip/unzip.c
+        ${DATADOCS_ZLIB_SOURCE_DIR}/contrib/minizip/ioapi.c
         )
 
 # parse the full version number from zlib.h and include in ZLIB_FULL_VERSION
-file(READ ${CMAKE_CURRENT_BINARY_DIR}/zlib/zlib.h _zlib_h_contents)
+file(READ ${DATADOCS_ZLIB_SOURCE_DIR}/zlib.h _zlib_h_contents)
 string(REGEX REPLACE ".*#define[ \t]+ZLIB_VERSION[ \t]+\"([-0-9A-Za-z.]+)\".*"
         "\\1" ZLIB_FULL_VERSION ${_zlib_h_contents})
 

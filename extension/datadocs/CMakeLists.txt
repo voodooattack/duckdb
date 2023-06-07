@@ -8,24 +8,38 @@ set(CMAKE_CXX_STANDARD 17)
 
 add_compile_options(-Wall)
 
+set(DATADOCS_DEPS_ROOT_DIR ${CMAKE_SOURCE_DIR}/.cache/deps)
+
+find_program(GIT_COMMAND git REQUIRED)
+
 function (fetch_dependency name cmake_file)
-  if(EXISTS ${CMAKE_CURRENT_BINARY_DIR}/${name}-download/CMakeCache.txt)
-    message(WARNING "${Cyan}Dependency found - not downloading - ${CMAKE_CURRENT_BINARY_DIR}/${name}-build${ColorReset}")
+  set(SOURCE_DIR "${DATADOCS_DEPS_ROOT_DIR}/${name}")
+  set(DOWNLOAD_DIR "${CMAKE_CURRENT_BINARY_DIR}/${name}-download")
+  set(BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/${name}-build")
+  string(TOUPPER ${name} name_upper)
+  set("DATADOCS_${name_upper}_SOURCE_DIR" "${SOURCE_DIR}" PARENT_SCOPE)
+  set("DATADOCS_${name_upper}_DOWNLOAD_DIR" "${DOWNLOAD_DIR}" PARENT_SCOPE)
+  set("DATADOCS_${name_upper}_BUILD_DIR" "${BUILD_DIR}" PARENT_SCOPE)
+  execute_process(COMMAND ${GIT_COMMAND} -C .git rev-parse
+            RESULT_VARIABLE result
+            WORKING_DIRECTORY "${SOURCE_DIR}" )
+  if(NOT result)
+    message(WARNING "${Cyan}Dependency found - not downloading - ${SOURCE_DIR}${ColorReset}")
   else()
-    message("${Cyan}Fetching Dependency '${name}' - ${CMAKE_CURRENT_BINARY_DIR}/${name}-download${ColorReset}")
-    configure_file(${cmake_file} ${name}-download/CMakeLists.txt)
+    message("${Cyan}Fetching Dependency '${name}' - ${DOWNLOAD_DIR}${ColorReset}")
+    configure_file(${cmake_file} "${DOWNLOAD_DIR}/CMakeLists.txt" @ONLY)
     execute_process(COMMAND ${CMAKE_COMMAND} -G "${CMAKE_GENERATOR}" .
             RESULT_VARIABLE result
-            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/${name}-download )
+            WORKING_DIRECTORY "${DOWNLOAD_DIR}" )
     if(result)
       message(FATAL_ERROR "CMake step for ${name} failed: ${result}")
     endif()
-	endif()
-	execute_process(COMMAND ${CMAKE_COMMAND} --build .
-					RESULT_VARIABLE result
-					WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/${name}-download )
-	if(result)
-		message(FATAL_ERROR "Build step for ${name} failed: ${result}")
+    execute_process(COMMAND ${CMAKE_COMMAND} --build .
+            RESULT_VARIABLE result
+            WORKING_DIRECTORY "${DOWNLOAD_DIR}" )
+    if(result)
+      message(FATAL_ERROR "Build step for ${name} failed: ${result}")
+    endif()
 	endif()
 endfunction()
 
@@ -105,7 +119,7 @@ target_include_directories(datadocs_extension
 	PRIVATE ../json/include
 	PRIVATE ../json/yyjson/include
 	# Boost includes
-	PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/boost
+	PRIVATE ${DATADOCS_DEPS_ROOT_DIR}
 	# libexpat includes
 	PRIVATE $<TARGET_PROPERTY:expat,INTERFACE_INCLUDE_DIRECTORIES>
 	# Privately includes icu

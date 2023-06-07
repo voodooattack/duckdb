@@ -342,3 +342,6 @@ zig-cache/*
 
 # .db files
 *.db
+
+# Cached sources
+.cache/

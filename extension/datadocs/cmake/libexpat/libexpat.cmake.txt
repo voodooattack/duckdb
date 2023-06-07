@@ -169,7 +169,7 @@ macro(expat_install)
     endif()
 endmacro()
 
-configure_file(${CMAKE_CURRENT_BINARY_DIR}/libexpat/expat/expat_config.h.cmake "${CMAKE_CURRENT_BINARY_DIR}/libexpat-build/expat_config.h")
+configure_file(${DATADOCS_EXPAT_SOURCE_DIR}/expat/expat_config.h.cmake "${DATADOCS_EXPAT_BUILD_DIR}/expat_config.h")
 add_definitions(-DHAVE_EXPAT_CONFIG_H)
 #expat_install(FILES "${CMAKE_CURRENT_BINARY_DIR}/expat_config.h" DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
@@ -210,7 +210,7 @@ if (MSVC)
     endif()
 endif()
 
-include_directories(${CMAKE_CURRENT_BINARY_DIR}/libexpat-build ${CMAKE_CURRENT_BINARY_DIR}/libexpat/expat/lib)
+include_directories(${DATADOCS_EXPAT_BUILD_DIR} ${DATADOCS_EXPAT_SOURCE_DIR}/expat/lib)
 if(MSVC)
     add_definitions(-D_CRT_SECURE_NO_WARNINGS -wd4996)
 endif(MSVC)
@@ -247,9 +247,9 @@ endif(WIN32)
 # C library
 #
 set(expat_SRCS
-    ${CMAKE_CURRENT_BINARY_DIR}/libexpat/expat/lib/xmlparse.c
-    ${CMAKE_CURRENT_BINARY_DIR}/libexpat/expat/lib/xmlrole.c
-    ${CMAKE_CURRENT_BINARY_DIR}/libexpat/expat/lib/xmltok.c
+    ${DATADOCS_EXPAT_SOURCE_DIR}/expat/lib/xmlparse.c
+    ${DATADOCS_EXPAT_SOURCE_DIR}/expat/lib/xmlrole.c
+    ${DATADOCS_EXPAT_SOURCE_DIR}/expat/lib/xmltok.c
 # NOTE: ISO C forbids an empty translation unit
 #   lib/xmltok_impl.c
 #   lib/xmltok_ns.c
@@ -298,8 +298,8 @@ endif(NOT WIN32)
 
 target_include_directories(${EXPAT_TARGET}
     INTERFACE
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/libexpat/expat/lib>
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/libexpat-build>
+        $<BUILD_INTERFACE:${DATADOCS_EXPAT_SOURCE_DIR}/expat/lib>
+        $<BUILD_INTERFACE:${DATADOCS_EXPAT_BUILD_DIR}>
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 
@@ -394,7 +394,7 @@ if(EXPAT_BUILD_TESTS)
         if(MINGW)
             set(host whatever-mingw32)  # for nothing but run.sh
         endif()
-        configure_file(${CMAKE_CURRENT_SOURCE_DIR}/run.sh.in run.sh @ONLY)
+        configure_file(${CMAKE_SOURCE_DIR}/.cache/deps/libexpat/run.sh.in run.sh @ONLY)
     endif()
 
     function(expat_add_test _name _file)
@@ -508,7 +508,7 @@ if(EXPAT_BUILD_TOOLS AND NOT MSVC)
     add_custom_target(
         xmltest-sh-been-run
         COMMAND
-            sh -c '${CMAKE_CURRENT_SOURCE_DIR}/tests/xmltest.sh "bash ${CMAKE_CURRENT_BINARY_DIR}/run.sh $<TARGET_FILE:xmlwf>" 2>&1 | tee tests/xmltest.log'
+            sh -c '${DATADOCS_EXPAT_SOURCE_DIR}/tests/xmltest.sh "bash ${CMAKE_CURRENT_BINARY_DIR}/run.sh $<TARGET_FILE:xmlwf>" 2>&1 | tee tests/xmltest.log'
         BYPRODUCTS
             tests/xmltest.log)
     add_dependencies(xmltest-sh-been-run xmlts-zip-extracted xmlwf)
@@ -516,7 +516,7 @@ if(EXPAT_BUILD_TOOLS AND NOT MSVC)
     add_custom_target(
         xmltest-log-fixed
         COMMAND
-            ${CMAKE_CURRENT_SOURCE_DIR}/fix-xmltest-log.sh tests/xmltest.log
+            ${DATADOCS_EXPAT_SOURCE_DIR}/fix-xmltest-log.sh tests/xmltest.log
         DEPENDS
             tests/xmltest.log)
     add_dependencies(xmltest-log-fixed xmltest-sh-been-run)
@@ -524,7 +524,7 @@ if(EXPAT_BUILD_TOOLS AND NOT MSVC)
     add_custom_target(
         xmltest-log-verified
         COMMAND
-            diff -u ${CMAKE_CURRENT_SOURCE_DIR}/tests/xmltest.log.expected tests/xmltest.log)
+            diff -u ${DATADOCS_EXPAT_SOURCE_DIR}/tests/xmltest.log.expected tests/xmltest.log)
     add_dependencies(xmltest-log-verified xmltest-log-fixed)
 
     add_custom_target(run-xmltest)

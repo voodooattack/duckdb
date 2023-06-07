@@ -10,7 +10,8 @@
 # It is located in 'deps/icu-init/res' subfolder. It should be loaded at runtime, a loader is implemented by 'icu-init'
 # project.
 #
-set(ICU_FULL_DIR ${CMAKE_CURRENT_BINARY_DIR}/icu/icu4c/)
+
+set(ICU_FULL_DIR ${DATADOCS_ICU_SOURCE_DIR}/icu4c/)
 
 # Options to customize ICU build. All off by default
 set(DISABLE_COLLATION FALSE CACHE BOOL "UCONFIG_NO_COLLATION")
