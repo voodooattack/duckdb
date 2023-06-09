@@ -189,3 +189,10 @@ add_library(
 set(GEO_LIBRARY_FILES
     ${GEO_LIBRARY_FILES} $<TARGET_OBJECTS:duckdb_geo_geos>
     PARENT_SCOPE)
+
+if(MSVC)
+  add_definitions(/FI"cstdint")
+else()
+  # GCC or Clang
+  add_definitions(-include cstdint)
+endif()

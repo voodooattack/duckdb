@@ -71,6 +71,13 @@ add_library(
   libpgcommon/lwgeom_transform.cpp
   lib/ryu.cpp)
 
+if(MSVC)
+  add_definitions(/FI"cstdint")
+else()
+  # GCC or Clang
+  add_definitions(-include cstdint)
+endif()
+
 set(GEO_EXTENSION_FILES
     ${GEO_LIBRARY_FILES} $<TARGET_OBJECTS:geo_extension>
     PARENT_SCOPE)
