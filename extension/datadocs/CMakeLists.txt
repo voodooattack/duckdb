@@ -133,8 +133,10 @@ target_link_libraries(datadocs_extension
         PRIVATE icu)
 
 if(WIN32)
-  target_compile_definitions(datadocs_extension PUBLIC LIBXML_STATIC)
+  target_compile_definitions(datadocs_extension PUBLIC -DLIBXML_STATIC)
 endif()
+
+target_compile_definitions(datadocs_extension PUBLIC -DBOOST_NO_CXX98_FUNCTION_BASE)
 
 install(
   TARGETS datadocs_extension zlib expat icu
